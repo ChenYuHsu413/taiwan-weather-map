@@ -1,6 +1,6 @@
 # 台灣即時氣象視覺化地圖
 
-類 Windy 風格的台灣即時氣象地圖，但**沒有使用 Windy 的 API、圖磚、資料或內嵌服務**。本專案的重點是自行整合公開氣象資料，並用 Leaflet、Canvas、IDW 內插與 NOAA GFS 風場格點，實作出接近 Windy 的平滑填色與粒子風場視覺。主要資料來源為**中央氣象署開放資料平台 API**；後端負責抓取、清洗、快取並轉成乾淨 GeoJSON，前端呈現測站、氣溫/雨量填色場、風向箭頭、雷達動畫與縣市界線。
+類 Windy 風格的台灣即時氣象地圖，但**沒有使用 Windy 的 API、圖磚、資料或內嵌服務**。本專案的重點是自行整合公開氣象資料，並用 Leaflet、Canvas、IDW 內插與 NOAA GFS 風場格點，實作出接近 Windy 的平滑填色與粒子風場視覺。主要資料來源為**中央氣象署開放資料平台 API**；後端負責抓取、清洗、快取並轉成乾淨 GeoJSON，前端呈現測站、氣溫/雨量填色場、風向箭頭、雷達動畫、天氣特報與縣市界線。
 
 ## 核心亮點：未使用 Windy，自行實作類 Windy 視覺
 
@@ -103,7 +103,7 @@ public/data/taiwan-counties.geojson  縣市界線（見下方來源）
 2. 後端檢查快取：**未超過 10 分鐘 → 直接回傳快取**（記憶體優先，其次 Postgres 最新快照）。
 3. 超過或無快取 → 呼叫 CWA `O-A0003-001`。若失敗或有效測站 < 30 筆 → fallback 到 `O-A0001-001`。
 4. 清洗 → 轉 GeoJSON → 寫入 Postgres（一筆快照 + 逐站時序觀測）→ 回傳。
-5. 外部 API 失敗但有舊快取 → 回傳舊快取並標示 `stale: true`（前端顯示「舊快取」提示）。
+5. 外部 API 失敗但有舊快取 → 回傳舊快取並標示 `stale: true`（前端摘要面板顯示「舊資料」提示）。
 
 快取採 in-flight 去重，避免多個請求同時打 CWA。資料持久化到 **Neon Postgres**（透過 Vercel Storage 整合連結，連線字串自動注入為 `POSTGRES_URL`/`DATABASE_URL`）；本機與線上連同一個雲端資料庫。因為是託管型共享 DB，冷啟動或換 serverless 執行個體後仍能讀回最新/舊快照，不像先前的 `/tmp` SQLite 會在換實例時遺失——這也是讓「使用者請求只讀 DB、不再同步卡在 CWA 而回 502」得以成立的關鍵。
 
@@ -121,7 +121,7 @@ public/data/taiwan-counties.geojson  縣市界線（見下方來源）
 2. 自行解析 XML，以 `<author><name>中央氣象署</name>` 篩出氣象署示警，取出事件類型、特報全文（`summary`）、生效/失效時間（`cap:effective` / `cap:expires`）與 CAP 連結。
 3. 解析結果批次 upsert 寫入 Postgres 的 `weather_warnings` 表（以單則示警 id 為主鍵，重複抓取即更新）。
 4. `GET /api/warnings` 從資料庫讀出**目前仍生效中**（`expires > now()`）的特報，前端 [WarningBanner.tsx](components/WarningBanner.tsx) 以頂部橫幅顯示；無特報時顯示「目前全台無生效中的天氣特報」。
-5. 結果以 10 分鐘記憶體快取（該來源限制 3 秒存取間隔，快取可避免頻繁請求）；若爬取失敗，改讀資料庫中的最後狀態並標示 `stale`，不讓前端中斷。
+5. 結果以 10 分鐘記憶體快取（該來源限制 3 秒存取間隔，快取可避免頻繁請求）；若爬取失敗，改讀資料庫中的最後狀態並標示 `stale`（失敗結果只快取 60 秒以盡快重試），不讓前端中斷。前端橫幅收合時會以小標籤列出目前的特報類型（如高溫、降雨、強風）。
 
 > Vercel 注意事項：資料寫入 **Neon Postgres**（於 Vercel 專案的 Storage 分頁連結 Neon 後自動注入連線字串），跨 serverless 實例共享且永久保存，不再受 `/tmp` 暫存空間「換實例即遺失」的限制。
 
@@ -147,13 +147,13 @@ public/data/taiwan-counties.geojson  縣市界線（見下方來源）
 - [x] 雷達回波動畫（RainViewer 圖磚，過去約 2 小時每 10 分一格；預設暫停於最新影格，可播放/暫停/拖曳時間軸；原生只取到 z7 再放大，避免外海「Zoom Level Not Supported」破圖）
 - [x] 天氣特報爬蟲 + Postgres：爬 NCDR CAP feed → 解析中央氣象署特報 → 寫入 `weather_warnings` 表 → 頂部橫幅顯示目前生效中的特報（`/api/warnings`）
 - [x] 使用者定位（Geolocation）+ turf 判斷所在縣市並高亮
-- [x] 摘要面板（最高/最低溫、最大雨量、最大風速、測站數、更新時間、資料來源、是否快取）
+- [x] 摘要面板（最高/最低溫、最大雨量、最大風速、測站數、更新時間、資料來源、本次讀取來源：即時 API / 資料庫 / 舊資料）
 - [x] loading / API 錯誤 / 定位失敗的友善提示
 - [x] 深色 dashboard 風格、響應式
 
 ## 尚未完成 / 後續可擴充
 
-- [ ] 颱風路徑、天氣警特報、預報圖層（架構已模組化，新增 `lib/` client + API route 即可）
+- [ ] 颱風路徑、預報圖層（架構已模組化，新增 `lib/` client + API route 即可）
 - [ ] 進一步自動化格點風場更新排程，讓 NOAA GFS 風場資料可定期重新產生
 - [ ] 手機版面板收合最佳化（目前可用，但小螢幕面板較擠）
 - [ ] 測站搜尋 / 篩選
