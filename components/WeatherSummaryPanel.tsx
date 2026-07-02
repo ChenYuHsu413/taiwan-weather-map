@@ -57,7 +57,7 @@ export default function WeatherSummaryPanel({
               : "bg-emerald-500/20 text-emerald-300"
           }`}
         >
-          {meta.stale ? "舊快取" : meta.cached ? "快取" : "即時"}
+          {meta.stale ? "舊資料" : meta.cached ? "資料庫" : "即時 API"}
         </span>
       </div>
 
@@ -68,6 +68,16 @@ export default function WeatherSummaryPanel({
         </div>
         <div>
           資料來源：<span className="text-gray-200">{meta.source}</span>
+        </div>
+        <div>
+          本次讀取：
+          <span className="text-gray-200">
+            {meta.stale
+              ? "資料庫舊資料（API 連線失敗）"
+              : meta.cached
+              ? "資料庫快取（未呼叫 API）"
+              : "即時呼叫 CWA API（已更新資料庫）"}
+          </span>
         </div>
         <div>
           測站數量：

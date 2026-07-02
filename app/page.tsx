@@ -6,7 +6,7 @@ import type { LayerKey, WeatherApiResponse } from "@/lib/types";
 import WeatherLayerControl from "@/components/WeatherLayerControl";
 import WeatherSummaryPanel from "@/components/WeatherSummaryPanel";
 import WeatherLegend from "@/components/WeatherLegend";
-import CrawlerLogPanel from "@/components/CrawlerLogPanel";
+import WarningBanner from "@/components/WarningBanner";
 
 // Leaflet 依賴 window，需關閉 SSR。
 const WeatherMap = dynamic(() => import("@/components/WeatherMap"), {
@@ -175,11 +175,15 @@ export default function Home() {
         </div>
       )}
 
+      {/* 頂部中央：天氣特報橫幅（NCDR CAP 爬蟲成果） */}
+      <div className="pointer-events-none absolute left-1/2 top-4 z-[900] flex -translate-x-1/2 justify-center">
+        <WarningBanner />
+      </div>
+
       {/* 左上：摘要面板 */}
       {meta && (
         <div className="absolute left-4 top-4 z-[900] flex flex-col gap-3">
           <WeatherSummaryPanel meta={meta} />
-          <CrawlerLogPanel />
         </div>
       )}
 

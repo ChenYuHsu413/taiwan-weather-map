@@ -73,25 +73,23 @@ async function createSchema(): Promise<void> {
       ON observations (station_id, observed_at DESC);
   `;
 
-  // 爬蟲稽核紀錄，刻意與結構化的 CWA 快照分開，讓 crawler + DB 流程可見。
+  // 從 NCDR 民生示警 CAP feed 爬到的「中央氣象署天氣特報」。id 為單則示警的唯一
+  // 識別碼，重複抓取以 upsert 更新；查詢時以 expires > now() 取出目前生效中的特報。
   await sql`
-    CREATE TABLE IF NOT EXISTS crawler_logs (
-      id            BIGSERIAL PRIMARY KEY,
-      source_name   TEXT NOT NULL,
-      source_url    TEXT NOT NULL,
-      fetched_at    TIMESTAMPTZ NOT NULL,
-      status        TEXT NOT NULL,
-      http_status   INTEGER,
-      content_type  TEXT,
-      file_size     INTEGER,
-      from_cache    BOOLEAN NOT NULL DEFAULT FALSE,
-      stale         BOOLEAN NOT NULL DEFAULT FALSE,
-      duration_ms   INTEGER,
-      error_message TEXT
+    CREATE TABLE IF NOT EXISTS weather_warnings (
+      id          TEXT PRIMARY KEY,
+      event       TEXT,
+      headline    TEXT,
+      msg_type    TEXT,
+      effective   TIMESTAMPTZ,
+      expires     TIMESTAMPTZ,
+      updated     TIMESTAMPTZ,
+      cap_url     TEXT,
+      fetched_at  TIMESTAMPTZ NOT NULL
     );
   `;
   await sql`
-    CREATE INDEX IF NOT EXISTS idx_crawler_logs_fetched_at
-      ON crawler_logs (fetched_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_warnings_expires
+      ON weather_warnings (expires DESC);
   `;
 }

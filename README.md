@@ -9,7 +9,7 @@
 - **沒有依賴 Windy**：未使用 Windy API、Windy 圖磚、Windy 資料或 iframe/embed。
 - **平滑氣象填色場**：將 CWA 離散測站資料透過 IDW 內插成連續色階，再裁切到台灣陸地範圍，呈現接近專業氣象圖層的視覺效果。
 - **粒子風場動畫**：使用 NOAA GFS 10m u/v 風場格點，前端以 Canvas 繪製流線粒子，做出類似 Windy 的動態風場。
-- **完整資料管線**：後端包含 API 抓取、資料清洗、快取、Postgres 紀錄與 fallback；前端則負責互動地圖、圖層控制、動畫與響應式儀表板。
+- **完整資料管線**：後端包含 API 抓取、資料清洗、Postgres 快取、天氣特報爬蟲與 fallback；前端則負責互動地圖、圖層控制、動畫與響應式儀表板。
 
 ## Demo
 
@@ -32,7 +32,7 @@ Next.js 14 (App Router) · TypeScript · Tailwind CSS · Leaflet / React Leaflet
 - **展示範圍調校**：風場圖層刻意限制縮放與拖曳範圍，並降低粒子移動速度與亮度，避免使用者拖到格點邊界或在低 zoom 時看到過度誇張的海面風速視覺。
 - **投影對齊**：填色點陣繪製時使用 Web Mercator / 反 Mercator 換算，和 Leaflet 的投影一致，避免海岸線附近出現系統性偏移。
 - **雷達動畫**：地圖上的雷達動畫使用 RainViewer 免費 XYZ 圖磚。RainViewer 和底圖同為 Web Mercator，因此比 CWA 靜態 PNG `imageOverlay` 更容易精準對齊；播放控制則透過預載多個 `TileLayer`，切換 opacity 形成回放動畫。
-- **CWA 雷達爬蟲**：仍保留 `GET /api/radar` 作為補充/備援 endpoint，後端只抓公開、免登入的 CWA 雷達 PNG，並加上 Referer、快取、重試限制與 stale 回退。此 endpoint 是爬蟲示範，不是目前地圖雷達疊圖的主要來源。
+- **天氣特報爬蟲**：後端爬取 NCDR 民生示警平台的公開 CAP Atom feed（免授權碼），自行解析出中央氣象署的天氣特報、寫入資料庫，前端再以頂部橫幅顯示目前生效中的特報。詳見下方「資料來源與爬蟲」。
 
 需求最早先與 ChatGPT 討論並整理成 [氣象資料網站建議.pdf](氣象資料網站建議.pdf)，再把整理後的 prompt 交給 Claude 進行開發。Claude 開發過程中的原始 prompt 與 agent 回應整理在 [claude-prompts.md](claude-prompts.md)。
 
@@ -74,8 +74,7 @@ app/
   page.tsx                       首頁（狀態管理、定位、版面）
   api/weather/current/route.ts   GET：回傳 GeoJSON + summary
   api/weather/history/route.ts   GET：單一測站歷史時序（?stationId=&limit=）
-  api/radar/route.ts             GET：代理回傳最新雷達回波 PNG（後端爬蟲）
-  api/crawler/logs/route.ts      GET：回傳最近的網站爬蟲 + Postgres 紀錄
+  api/warnings/route.ts          GET：目前生效中的天氣特報（NCDR CAP 爬蟲）
 lib/
   cwa.ts               CWA API client（timeout、錯誤處理、primary/fallback）
   weather-transform.ts 原始 JSON → 統一 GeoJSON（缺值轉 null、去重、座標驗證）
@@ -83,15 +82,14 @@ lib/
   weather-cache.ts     10 分鐘快取（記憶體 + Postgres + stale 回退）
   weather-store.ts     Postgres 儲存：寫快照 + 逐站時序、讀最新、查歷史
   db.ts                Postgres（Neon）連線 + schema
-  crawler-store.ts     Postgres 儲存：網站爬蟲執行紀錄
-  radar.ts             CWA 雷達圖爬蟲（帶 Referer/UA、快取、頻率限制、stale 回退）
+  warnings.ts          天氣特報爬蟲：抓 NCDR CAP feed → 解析 → 寫 DB → 讀生效中
   color-scale.ts       氣溫/風速/濕度/雨量色階
   types.ts             TypeScript 型別
 components/
   WeatherMap.tsx           Leaflet 地圖（底圖切換、markers、風向箭頭、縣市界線、定位、雷達疊圖）
   InterpolatedField.tsx    逐像素 IDW 內插填色場（氣溫/雨量，類 Windy 平滑漸層，裁切到陸地）
   WindParticleLayer.tsx    測站風速/風向 IDW 內插後的 Canvas 粒子風場動畫
-  CrawlerLogPanel.tsx      CWA 網站爬蟲紀錄面板（可手動執行爬蟲）
+  WarningBanner.tsx        天氣特報橫幅（NCDR CAP 爬蟲成果，頂部顯示）
   WeatherLayerControl.tsx  圖層切換 + 雷達/縣市開關 + 定位按鈕
   WeatherSummaryPanel.tsx  左上摘要面板
   WeatherStationPopup.tsx  測站 popup 內容
@@ -113,17 +111,17 @@ public/data/taiwan-counties.geojson  縣市界線（見下方來源）
 
 - **主要來源（官方 API）**：所有測站資料來自 CWA 開放資料 API（`O-A0003-001` / `O-A0001-001`）。
 - **雷達動畫（地圖圖層）**：使用 [RainViewer](https://www.rainviewer.com/) 免費雷達圖磚（標準 XYZ tiles）。圖磚與底圖同為 Web Mercator，**天生正確對齊**。前端向 `api.rainviewer.com` 取過去約 2 小時的影格清單（每 10 分一格），預載各影格 `TileLayer` 並依索引切換 opacity 播放（切換瞬間完成、無閃爍）；底部控制列可播放/暫停與拖曳時間軸。
-- **CWA 雷達爬蟲（補充 endpoint）**：[lib/radar.ts](lib/radar.ts) + `GET /api/radar`。CWA 雷達合成圖為公開靜態 PNG，但官網擋裸連結（缺 `Referer` 回 403），故後端帶正確 `Referer` 抓取公開影像並代理。**只抓公開/免登入影像**，含 10 分鐘快取、失敗後 60 秒最短重試、stale 回退。此為爬蟲示範與備援；未用於地圖疊圖，因為 CWA 預算圖的投影/地理範圍無公開文件（此授權層級也無雷達 open data 權限），`imageOverlay` 無法精準對齊。
+- **天氣特報爬蟲（NCDR CAP feed）**：[lib/warnings.ts](lib/warnings.ts) + `GET /api/warnings`。詳見下方「爬蟲 + 資料庫展示」。
 
 ### 爬蟲 + 資料庫展示
 
-為了展示課堂要求的「網站爬蟲 + 資料庫」，首頁左上加入 **CWA 爬蟲紀錄** 面板，可手動執行一次中央氣象署網站爬蟲。流程如下：
+為了展示課堂要求的「網站爬蟲 + 資料庫」，本專案爬取**中央氣象署的天氣特報**並以頂部橫幅顯示。刻意選用官方 API 以外的網站來源，才是真正的「爬蟲」。流程如下：
 
-1. 前端按下「執行爬蟲」後呼叫 `GET /api/radar`。
-2. 後端以 `User-Agent` 與 `Referer` 向 CWA 網站抓取公開雷達 PNG：`https://www.cwa.gov.tw/Data/radar/CV1_3600.png`。
-3. 抓取結果寫入 Postgres 的 `crawler_logs` 表，欄位包含來源名稱、來源網址、抓取時間、狀態（`success` / `failed` / `cache_hit` / `stale`）、HTTP 狀態碼、content type、檔案大小、是否快取、是否 stale、耗時與錯誤訊息。
-4. `GET /api/crawler/logs` 讀取最近紀錄，前端面板顯示最近抓取時間、狀態、HTTP 狀態與檔案大小。
-5. 若 CWA 網站暫時無法取得新圖資，系統會回傳記憶體快取中的最後一次成功圖資並記錄 `stale`，避免前端直接中斷。
+1. 後端向 NCDR 民生示警公開資料平台抓取整包 CAP Atom feed：`https://alerts.ncdr.nat.gov.tw/RssAtomFeed.ashx`（公開 XML、免授權碼）。
+2. 自行解析 XML，以 `<author><name>中央氣象署</name>` 篩出氣象署示警，取出事件類型、特報全文（`summary`）、生效/失效時間（`cap:effective` / `cap:expires`）與 CAP 連結。
+3. 解析結果批次 upsert 寫入 Postgres 的 `weather_warnings` 表（以單則示警 id 為主鍵，重複抓取即更新）。
+4. `GET /api/warnings` 從資料庫讀出**目前仍生效中**（`expires > now()`）的特報，前端 [WarningBanner.tsx](components/WarningBanner.tsx) 以頂部橫幅顯示；無特報時顯示「目前全台無生效中的天氣特報」。
+5. 結果以 10 分鐘記憶體快取（該來源限制 3 秒存取間隔，快取可避免頻繁請求）；若爬取失敗，改讀資料庫中的最後狀態並標示 `stale`，不讓前端中斷。
 
 > Vercel 注意事項：資料寫入 **Neon Postgres**（於 Vercel 專案的 Storage 分頁連結 Neon 後自動注入連線字串），跨 serverless 實例共享且永久保存，不再受 `/tmp` 暫存空間「換實例即遺失」的限制。
 
@@ -146,8 +144,8 @@ public/data/taiwan-counties.geojson  縣市界線（見下方來源）
 - [x] 濕度色階圖層
 - [x] 底圖切換：深色 ↔ OpenStreetMap 街道圖
 - [x] 縣市界線 + hover 高亮 + 點擊 zoom
-- [x] 雷達回波動畫（RainViewer 圖磚，過去約 2 小時每 10 分一格；預設暫停於最新影格，可播放/暫停/拖曳時間軸；原生只取到 z7 再放大，避免外海「Zoom Level Not Supported」破圖）+ CWA 雷達爬蟲 endpoint
-- [x] CWA 網站爬蟲 + Postgres 紀錄：每次雷達爬蟲成功/失敗/快取/stale 都寫入 `crawler_logs`，並可由 `/api/crawler/logs` 與首頁面板檢視
+- [x] 雷達回波動畫（RainViewer 圖磚，過去約 2 小時每 10 分一格；預設暫停於最新影格，可播放/暫停/拖曳時間軸；原生只取到 z7 再放大，避免外海「Zoom Level Not Supported」破圖）
+- [x] 天氣特報爬蟲 + Postgres：爬 NCDR CAP feed → 解析中央氣象署特報 → 寫入 `weather_warnings` 表 → 頂部橫幅顯示目前生效中的特報（`/api/warnings`）
 - [x] 使用者定位（Geolocation）+ turf 判斷所在縣市並高亮
 - [x] 摘要面板（最高/最低溫、最大雨量、最大風速、測站數、更新時間、資料來源、是否快取）
 - [x] loading / API 錯誤 / 定位失敗的友善提示
