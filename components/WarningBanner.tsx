@@ -93,7 +93,7 @@ export default function WarningBanner() {
             eventTypes.slice(0, 4).map((e) => (
               <span
                 key={e}
-                className={`rounded px-1.5 py-0.5 text-[10px] font-normal ${eventClass(
+                className={`rounded px-1.5 py-0.5 text-[11px] font-normal ${eventClass(
                   e
                 )}`}
               >
@@ -101,12 +101,12 @@ export default function WarningBanner() {
               </span>
             ))}
           {!open && eventTypes.length > 4 && (
-            <span className="text-[10px] font-normal text-gray-400">
+            <span className="text-[11px] font-normal text-gray-400">
               +{eventTypes.length - 4}
             </span>
           )}
           {open && (
-            <span className="text-[10px] font-normal text-gray-400">
+            <span className="text-[11px] font-normal text-gray-400">
               來源：NCDR CAP 爬蟲 · 中央氣象署
             </span>
           )}
@@ -114,7 +114,7 @@ export default function WarningBanner() {
         {hasWarnings && (
           <button
             onClick={() => setOpen((v) => !v)}
-            className="shrink-0 rounded bg-white/10 px-2 py-0.5 text-[11px] text-gray-200 hover:bg-white/20"
+            className="shrink-0 rounded bg-white/10 px-2 py-1 text-xs text-gray-200 hover:bg-white/20"
           >
             {open ? "收合" : "展開"}
           </button>
@@ -122,7 +122,7 @@ export default function WarningBanner() {
       </div>
 
       {!hasWarnings ? (
-        <div className="px-3 pb-2.5 text-[11px] text-gray-400">
+        <div className="px-3 pb-2.5 text-[13px] text-gray-400">
           {stale
             ? "特報來源暫時無法連線，顯示資料庫中的最後狀態。"
             : "目前全台無生效中的天氣特報。"}
@@ -131,7 +131,7 @@ export default function WarningBanner() {
         open && (
           <div className="max-h-52 space-y-1.5 overflow-y-auto border-t border-white/10 px-3 py-2">
             {stale && (
-              <div className="rounded bg-amber-500/10 px-2 py-1 text-[11px] text-amber-300">
+              <div className="rounded bg-amber-500/10 px-2 py-1 text-[12px] text-amber-300">
                 特報來源暫時無法連線，顯示資料庫中的最後狀態。
               </div>
             )}
@@ -139,19 +139,19 @@ export default function WarningBanner() {
               <div key={w.id} className="rounded-md bg-white/5 px-2.5 py-1.5">
                 <div className="flex items-center gap-2">
                   <span
-                    className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] ${eventClass(
+                    className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] ${eventClass(
                       w.event
                     )}`}
                   >
                     {w.event || "特報"}
                   </span>
                   {w.expires && (
-                    <span className="text-[10px] text-gray-400">
+                    <span className="text-[11px] text-gray-400">
                       有效至 {fmtExpires(w.expires)}
                     </span>
                   )}
                 </div>
-                <p className="mt-1 text-[11px] leading-relaxed text-gray-200">
+                <p className="mt-1 text-[13px] leading-relaxed text-gray-200">
                   {w.headline}
                 </p>
               </div>
