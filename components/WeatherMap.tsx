@@ -228,14 +228,13 @@ export default function WeatherMap({
             <WindStationArrow key={f.properties.stationId} f={f} />
           ))
         ) : null
-      ) : mode === "temperature"
-        ? <TemperatureLayer features={features} />
-        : (mode === "precipitation"
-            ? features.filter((f) => (f.properties.precipitation ?? 0) > 0)
-            : features
-          ).map((f) => (
-            <StationCircle key={f.properties.stationId} f={f} mode={mode} />
-          ))}
+      ) : mode === "temperature" ? (
+        <TemperatureLayer features={features} />
+      ) : mode === "precipitation" ? null : (
+        features.map((f) => (
+          <StationCircle key={f.properties.stationId} f={f} mode={mode} />
+        ))
+      )}
 
       {userLocation && (
         <CircleMarker
