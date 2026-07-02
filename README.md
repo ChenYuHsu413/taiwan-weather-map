@@ -142,6 +142,7 @@ public/data/taiwan-counties.geojson  縣市界線（見下方來源）
 - [x] 風向箭頭（依 windDirection 旋轉、依 windSpeed 上色）
 - [x] 粒子風場動畫：優先使用 NOAA GFS 10m u/v 格點風場，前端雙線性內插後以 Canvas 粒子流線呈現類 Windy 的風場視覺；若格點資料失敗才退回 CWA 測站 IDW 近似
 - [x] 濕度色階圖層
+- [x] 天氣（陰晴）示意圖層：每縣市取多數測站的天氣現象，以 emoji 徽章（☀️/⛅/☁️/🌧️/⛈️/🌫️）標在縣市代表位置
 - [x] 底圖切換：深色 ↔ OpenStreetMap 街道圖
 - [x] 縣市界線 + hover 高亮 + 點擊 zoom
 - [x] 雷達回波動畫（RainViewer 圖磚，過去約 2 小時每 10 分一格；預設暫停於最新影格，可播放/暫停/拖曳時間軸；原生只取到 z7 再放大，避免外海「Zoom Level Not Supported」破圖）

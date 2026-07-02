@@ -230,6 +230,8 @@ export default function WeatherMap({
         ) : null
       ) : mode === "temperature" ? (
         <TemperatureLayer features={features} />
+      ) : mode === "weather" ? (
+        <WeatherConditionLayer features={features} />
       ) : mode === "precipitation" ? null : (
         features.map((f) => (
           <StationCircle key={f.properties.stationId} f={f} mode={mode} />
@@ -358,6 +360,125 @@ function TemperatureLayer({ features }: { features: WeatherFeature[] }) {
     <>
       {aggregates.map((a) => (
         <BigTempMarker key={a.county} agg={a} />
+      ))}
+    </>
+  );
+}
+
+// ---- 天氣現象（陰晴）圖層：每縣市取多數測站的天氣，以 emoji 示意 ----
+
+/** 將 CWA 天氣現象文字對應到 emoji。順序：雷 > 雨 > 雪 > 霧/靄 > 晴 > 多雲 > 陰。 */
+function weatherEmoji(text: string | null): string {
+  const w = text ?? "";
+  if (/雷/.test(w)) return "⛈️";
+  if (/雨/.test(w)) return "🌧️";
+  if (/雪/.test(w)) return "🌨️";
+  if (/霧|靄/.test(w)) return "🌫️";
+  if (/晴/.test(w)) return "☀️";
+  if (/多雲/.test(w)) return "⛅";
+  if (/陰/.test(w)) return "☁️";
+  return "🌡️";
+}
+
+interface CountyWeather {
+  county: string;
+  emoji: string;
+  label: string; // 最多數的天氣現象文字
+  lng: number;
+  lat: number;
+  count: number;
+}
+
+/** 取 Map 中計數最高的 key。 */
+function topKey(m: Map<string, number>): string {
+  let best = "";
+  let n = -1;
+  m.forEach((v, k) => {
+    if (v > n) {
+      best = k;
+      n = v;
+    }
+  });
+  return best;
+}
+
+/** 依縣市彙總代表天氣：取最常見的天氣現象文字，再由它決定 emoji（兩者保證一致）；
+ *  位置取各站座標平均。 */
+function aggregateWeatherByCounty(features: WeatherFeature[]): CountyWeather[] {
+  const acc = new Map<
+    string,
+    { sumLng: number; sumLat: number; n: number; label: Map<string, number> }
+  >();
+  for (const f of features) {
+    const w = f.properties.weather;
+    const c = f.properties.county;
+    if (!w || !c) continue;
+    const [lng, lat] = f.geometry.coordinates;
+    const e = acc.get(c) ?? { sumLng: 0, sumLat: 0, n: 0, label: new Map() };
+    e.sumLng += lng;
+    e.sumLat += lat;
+    e.n += 1;
+    e.label.set(w, (e.label.get(w) ?? 0) + 1);
+    acc.set(c, e);
+  }
+  return Array.from(acc.entries()).map(([county, e]) => {
+    const label = topKey(e.label);
+    return {
+      county,
+      emoji: weatherEmoji(label),
+      label,
+      lng: e.sumLng / e.n,
+      lat: e.sumLat / e.n,
+      count: e.n,
+    };
+  });
+}
+
+/** 天氣示意徽章 icon（emoji + 縣市名）。 */
+function weatherBadgeIcon(emoji: string, county: string): L.DivIcon {
+  const html =
+    `<div style="display:flex;align-items:center;gap:4px;padding:2px 7px;border-radius:9999px;` +
+    `background:rgba(15,23,42,0.85);border:1px solid rgba(255,255,255,0.18);white-space:nowrap;` +
+    `box-shadow:0 1px 3px rgba(0,0,0,0.45)">` +
+    `<span style="font-size:16px;line-height:1">${emoji}</span>` +
+    `<span style="font-size:12px;color:#e5e7eb">${county}</span></div>`;
+  return L.divIcon({
+    className: "wx-badge-wrap",
+    html,
+    iconSize: [76, 24],
+    iconAnchor: [38, 12],
+  });
+}
+
+function WeatherConditionMarker({ w }: { w: CountyWeather }) {
+  const icon = useMemo(
+    () => weatherBadgeIcon(w.emoji, w.county),
+    [w.emoji, w.county]
+  );
+  return (
+    <Marker position={[w.lat, w.lng]} icon={icon}>
+      <Popup>
+        <div className="text-sm">
+          <div className="font-bold text-white">{w.county}</div>
+          <div className="text-gray-300">
+            {w.emoji} {w.label}
+          </div>
+          <div className="text-[11px] text-gray-400">
+            {w.count} 個測站 · 多數天氣現象
+          </div>
+        </div>
+      </Popup>
+    </Marker>
+  );
+}
+
+/** 天氣圖層：每縣市一個 emoji 徽章。 */
+function WeatherConditionLayer({ features }: { features: WeatherFeature[] }) {
+  const items = useMemo(() => aggregateWeatherByCounty(features), [features]);
+  return (
+    <>
+      {items.map((w) => (
+        <WeatherConditionMarker key={w.county} w={w} />
       ))}
     </>
   );

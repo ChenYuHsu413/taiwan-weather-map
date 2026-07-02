@@ -20,7 +20,37 @@ function StopRow({ color, label }: { color: string; label: string }) {
   );
 }
 
+const WEATHER_LEGEND = [
+  { icon: "☀️", label: "晴" },
+  { icon: "⛅", label: "多雲" },
+  { icon: "☁️", label: "陰" },
+  { icon: "🌧️", label: "有雨" },
+  { icon: "⛈️", label: "雷雨" },
+  { icon: "🌫️", label: "霧/靄" },
+];
+
 export default function WeatherLegend({ mode }: { mode: LayerKey }) {
+  if (mode === "weather") {
+    return (
+      <div className="pointer-events-auto rounded-lg bg-panel p-3 shadow-lg backdrop-blur">
+        <div className="mb-2 text-xs font-semibold text-gray-100">
+          天氣（各縣市代表）
+        </div>
+        <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+          {WEATHER_LEGEND.map((it) => (
+            <div key={it.label} className="flex items-center gap-2">
+              <span className="text-sm">{it.icon}</span>
+              <span className="text-xs text-gray-300">{it.label}</span>
+            </div>
+          ))}
+        </div>
+        <div className="mt-2 border-t border-white/10 pt-2 text-[10px] text-gray-400">
+          取各縣市多數測站的天氣現象
+        </div>
+      </div>
+    );
+  }
+
   let title = "";
   let stops: { color: string; label: string }[] = [];
 
@@ -50,7 +80,7 @@ export default function WeatherLegend({ mode }: { mode: LayerKey }) {
       </div>
       {mode === "precipitation" && (
         <div className="mt-2 border-t border-white/10 pt-2 text-[10px] text-gray-400">
-          填色為內插後的雨量分布，小點為測站位置
+          填色為內插後的雨量分布
         </div>
       )}
       {mode === "wind" && (
