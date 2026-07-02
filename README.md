@@ -1,10 +1,27 @@
 # 台灣即時氣象視覺化地圖
 
-類 Windy 風格的台灣即時氣象地圖，資料來源為**中央氣象署開放資料平台 API**。後端負責抓取、清洗、快取並轉成乾淨 GeoJSON；前端用 Leaflet 呈現測站、氣溫色階、雨量圓圈、風向箭頭與縣市界線。
+類 Windy 風格的台灣即時氣象地圖，資料來源為**中央氣象署開放資料平台 API**。後端負責抓取、清洗、快取並轉成乾淨 GeoJSON；前端用 Leaflet 呈現測站、平滑氣溫/雨量填色場、風向箭頭、雷達動畫與縣市界線。
+
+## Demo
+
+線上展示：https://taiwan-weather-map.vercel.app/
 
 ## 技術棧
 
 Next.js 14 (App Router) · TypeScript · Tailwind CSS · Leaflet / React Leaflet · turf.js
+
+## 關於 Windy 風格的實作
+
+本專案**沒有使用 Windy 的 API、資料、圖磚或任何 Windy 內嵌服務**；「類 Windy」指的是視覺與互動體驗的參考。實際做法如下：
+
+- **地圖引擎**：使用 Leaflet / React Leaflet 呈現互動地圖、圖層切換、測站 popup、使用者定位與縣市邊界。
+- **即時測站資料**：使用中央氣象署 CWA 開放資料 API（`O-A0003-001` 優先，`O-A0001-001` fallback），後端統一清洗成 GeoJSON，並以 10 分鐘快取降低外部 API 壓力。
+- **平滑氣溫/雨量場**：前端在 [InterpolatedField.tsx](components/InterpolatedField.tsx) 用逐像素 IDW（Inverse Distance Weighting）把離散測站值內插成連續點陣，再用縣市/陸地 polygon 裁切，以 `ImageOverlay` 疊到地圖上，做出接近 Windy 的平滑漸層效果。
+- **投影對齊**：填色點陣繪製時使用 Web Mercator / 反 Mercator 換算，和 Leaflet 的投影一致，避免海岸線附近出現系統性偏移。
+- **雷達動畫**：地圖上的雷達動畫使用 RainViewer 免費 XYZ 圖磚。RainViewer 和底圖同為 Web Mercator，因此比 CWA 靜態 PNG `imageOverlay` 更容易精準對齊；播放控制則透過預載多個 `TileLayer`，切換 opacity 形成回放動畫。
+- **CWA 雷達爬蟲**：仍保留 `GET /api/radar` 作為補充/備援 endpoint，後端只抓公開、免登入的 CWA 雷達 PNG，並加上 Referer、快取、重試限制與 stale 回退。此 endpoint 是爬蟲示範，不是目前地圖雷達疊圖的主要來源。
+
+開發過程中的原始 prompt 與 agent 回應整理在 [claude-prompts.md](claude-prompts.md)。
 
 ## 快速開始
 
