@@ -75,6 +75,7 @@ app/
   api/weather/current/route.ts   GET：回傳 GeoJSON + summary
   api/weather/history/route.ts   GET：單一測站歷史時序（?stationId=&limit=）
   api/warnings/route.ts          GET：目前生效中的天氣特報（NCDR CAP 爬蟲）
+  api/forecast/route.ts          GET：各縣市今明 36 小時預報（CWA F-C0032-001）
 lib/
   cwa.ts               CWA API client（timeout、錯誤處理、primary/fallback）
   weather-transform.ts 原始 JSON → 統一 GeoJSON（缺值轉 null、去重、座標驗證）
@@ -83,6 +84,7 @@ lib/
   weather-store.ts     Postgres 儲存：寫快照 + 逐站時序、讀最新、查歷史
   db.ts                Postgres（Neon）連線 + schema
   warnings.ts          天氣特報爬蟲：抓 NCDR CAP feed → 解析 → 寫 DB → 讀生效中
+  forecast.ts          天氣預報：抓 CWA F-C0032-001 → 解析 → 寫 DB → 讀回（API+DB）
   color-scale.ts       氣溫/風速/濕度/雨量色階
   types.ts             TypeScript 型別
 components/
@@ -143,6 +145,7 @@ public/data/taiwan-counties.geojson  縣市界線（見下方來源）
 - [x] 粒子風場動畫：優先使用 NOAA GFS 10m u/v 格點風場，前端雙線性內插後以 Canvas 粒子流線呈現類 Windy 的風場視覺；若格點資料失敗才退回 CWA 測站 IDW 近似
 - [x] 濕度色階圖層
 - [x] 天氣（陰晴）示意圖層：每縣市取多數測站的天氣現象，以 emoji 徽章（☀️/⛅/☁️/🌧️/⛈️/🌫️）標在縣市代表位置
+- [x] 天氣預報圖層：CWA F-C0032-001 今明 36 小時（天氣/高溫/降雨機率），逐縣市徽章 + 點擊看三時段（API 抓取 → Postgres → 前端）
 - [x] 底圖切換：深色 ↔ OpenStreetMap 街道圖
 - [x] 縣市界線 + hover 高亮 + 點擊 zoom
 - [x] 雷達回波動畫（RainViewer 圖磚，過去約 2 小時每 10 分一格；預設暫停於最新影格，可播放/暫停/拖曳時間軸；原生只取到 z7 再放大，避免外海「Zoom Level Not Supported」破圖）
@@ -154,7 +157,7 @@ public/data/taiwan-counties.geojson  縣市界線（見下方來源）
 
 ## 尚未完成 / 後續可擴充
 
-- [ ] 颱風路徑、預報圖層（架構已模組化，新增 `lib/` client + API route 即可）
+- [ ] 颱風路徑（架構已模組化，新增 `lib/` client + API route 即可）
 - [ ] 進一步自動化格點風場更新排程，讓 NOAA GFS 風場資料可定期重新產生
 - [ ] 手機版面板收合最佳化（目前可用，但小螢幕面板較擠）
 - [ ] 測站搜尋 / 篩選

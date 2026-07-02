@@ -25,6 +25,7 @@ import {
   windColor,
   humidityColor,
 } from "@/lib/color-scale";
+import type { CountyForecast, ForecastPeriod } from "@/lib/forecast";
 import WeatherStationPopup from "./WeatherStationPopup";
 import InterpolatedField from "./InterpolatedField";
 import WindParticleLayer from "./WindParticleLayer";
@@ -232,6 +233,8 @@ export default function WeatherMap({
         <TemperatureLayer features={features} />
       ) : mode === "weather" ? (
         <WeatherConditionLayer features={features} />
+      ) : mode === "forecast" ? (
+        <ForecastLayer features={features} />
       ) : mode === "precipitation" ? null : (
         features.map((f) => (
           <StationCircle key={f.properties.stationId} f={f} mode={mode} />
@@ -440,10 +443,12 @@ function aggregateWeatherByCounty(features: WeatherFeature[]): CountyWeather[] {
  * 等效於水平所需間距大於垂直，避免寬標籤左右疊住。質心近乎重合（市被縣包住）
  * 時預設往垂直方向推。通用處理所有擁擠處，不寫死任何縣市名。
  */
-function deconflictPositions(items: CountyWeather[]): CountyWeather[] {
+function deconflictPositions<T extends { lat: number; lng: number }>(
+  items: T[]
+): T[] {
   const SEP = 0.13; // 壓縮空間中的最小間距（度）
   const ASPECT = 2.8; // 徽章寬高比，橫向間距需求 ≈ SEP × ASPECT
-  const pts = items.map((it) => ({ ...it, sLng: it.lng / ASPECT }));
+  const pts = items.map((it) => ({ item: it, lat: it.lat, sLng: it.lng / ASPECT }));
   for (let iter = 0; iter < 40; iter++) {
     let maxPush = 0;
     for (let a = 0; a < pts.length; a++) {
@@ -469,14 +474,27 @@ function deconflictPositions(items: CountyWeather[]): CountyWeather[] {
     }
     if (maxPush < 1e-4) break; // 已穩定
   }
-  return pts.map((p) => ({
-    county: p.county,
-    emoji: p.emoji,
-    label: p.label,
-    count: p.count,
-    lat: p.lat,
-    lng: p.sLng * ASPECT,
-  }));
+  return pts.map((p) => ({ ...p.item, lat: p.lat, lng: p.sLng * ASPECT }));
+}
+
+/** 依縣市彙總各站座標平均，作為放置徽章的代表位置。 */
+function countyCentroidMap(
+  features: WeatherFeature[]
+): Map<string, { lat: number; lng: number }> {
+  const acc = new Map<string, { sumLat: number; sumLng: number; n: number }>();
+  for (const f of features) {
+    const c = f.properties.county;
+    if (!c) continue;
+    const [lng, lat] = f.geometry.coordinates;
+    const e = acc.get(c) ?? { sumLat: 0, sumLng: 0, n: 0 };
+    e.sumLat += lat;
+    e.sumLng += lng;
+    e.n += 1;
+    acc.set(c, e);
+  }
+  const out = new Map<string, { lat: number; lng: number }>();
+  acc.forEach((e, c) => out.set(c, { lat: e.sumLat / e.n, lng: e.sumLng / e.n }));
+  return out;
 }
 
 /** 天氣示意徽章 icon（emoji + 縣市名）。 */
@@ -527,6 +545,138 @@ function WeatherConditionLayer({ features }: { features: WeatherFeature[] }) {
     <>
       {items.map((w) => (
         <WeatherConditionMarker key={w.county} w={w} />
+      ))}
+    </>
+  );
+}
+
+// ---- 天氣預報圖層（CWA F-C0032-001，各縣市今明 36 小時）----
+
+interface ForecastItem {
+  county: string;
+  emoji: string;
+  maxT: number | null;
+  pop: number | null;
+  periods: ForecastPeriod[];
+  lat: number;
+  lng: number;
+}
+
+/** 將 CWA 預報時間字串（如 "2026-07-03 06:00:00"）格式化為 "MM/DD HH時"。 */
+function fmtForecastTime(s: string | null): string {
+  if (!s || s.length < 13) return "";
+  return `${s.slice(5, 10)} ${s.slice(11, 13)}時`;
+}
+
+/** 預報徽章 icon：emoji + 高溫 + 降雨機率。 */
+function forecastBadgeIcon(
+  emoji: string,
+  maxT: number | null,
+  pop: number | null
+): L.DivIcon {
+  const t = maxT === null ? "" : `${Math.round(maxT)}°`;
+  const p = pop === null ? "" : `💧${pop}%`;
+  const text = [t, p].filter(Boolean).join(" ");
+  const html =
+    `<div style="display:flex;align-items:center;gap:4px;padding:2px 7px;border-radius:9999px;` +
+    `background:rgba(15,23,42,0.85);border:1px solid rgba(255,255,255,0.18);white-space:nowrap;` +
+    `box-shadow:0 1px 3px rgba(0,0,0,0.45)">` +
+    `<span style="font-size:15px;line-height:1">${emoji}</span>` +
+    `<span style="font-size:11px;color:#e5e7eb">${text}</span></div>`;
+  return L.divIcon({
+    className: "wx-badge-wrap",
+    html,
+    iconSize: [76, 24],
+    iconAnchor: [38, 12],
+  });
+}
+
+function ForecastPopup({
+  county,
+  periods,
+}: {
+  county: string;
+  periods: ForecastPeriod[];
+}) {
+  return (
+    <div className="text-sm">
+      <div className="font-bold text-white">{county}</div>
+      {periods.map((p, i) => (
+        <div
+          key={i}
+          className="mt-1 border-t border-white/10 pt-1 first:mt-0 first:border-0 first:pt-0"
+        >
+          <div className="text-[11px] text-gray-400">
+            {fmtForecastTime(p.start)}–{fmtForecastTime(p.end)}
+          </div>
+          <div className="text-gray-200">
+            {weatherEmoji(p.wx ?? "")} {p.wx ?? "—"}
+          </div>
+          <div className="text-[12px] text-gray-300">
+            🌡️ {p.minT ?? "—"}–{p.maxT ?? "—"}°C · 💧{p.pop ?? "—"}%
+            {p.ci ? ` · ${p.ci}` : ""}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ForecastMarker({ it }: { it: ForecastItem }) {
+  const icon = useMemo(
+    () => forecastBadgeIcon(it.emoji, it.maxT, it.pop),
+    [it.emoji, it.maxT, it.pop]
+  );
+  return (
+    <Marker position={[it.lat, it.lng]} icon={icon}>
+      <Popup>
+        <ForecastPopup county={it.county} periods={it.periods} />
+      </Popup>
+    </Marker>
+  );
+}
+
+/** 預報圖層：抓 /api/forecast，於各縣市代表位置放預報徽章。 */
+function ForecastLayer({ features }: { features: WeatherFeature[] }) {
+  const [data, setData] = useState<CountyForecast[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/forecast", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j) => {
+        if (!cancelled && j.success) setData(j.forecast ?? []);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const centroids = useMemo(() => countyCentroidMap(features), [features]);
+  const items = useMemo(() => {
+    const arr = data
+      .map((f): ForecastItem | null => {
+        const c = centroids.get(f.county);
+        if (!c) return null;
+        const p0 = f.periods[0];
+        return {
+          county: f.county,
+          emoji: weatherEmoji(p0?.wx ?? ""),
+          maxT: p0?.maxT ?? null,
+          pop: p0?.pop ?? null,
+          periods: f.periods,
+          lat: c.lat,
+          lng: c.lng,
+        };
+      })
+      .filter((x): x is ForecastItem => x !== null);
+    return deconflictPositions(arr);
+  }, [data, centroids]);
+
+  return (
+    <>
+      {items.map((it) => (
+        <ForecastMarker key={it.county} it={it} />
       ))}
     </>
   );

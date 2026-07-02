@@ -8,6 +8,7 @@ const MODES: { key: LayerKey; label: string; icon: string }[] = [
   { key: "wind", label: "風速風向", icon: "💨" },
   { key: "humidity", label: "濕度", icon: "💧" },
   { key: "weather", label: "天氣", icon: "⛅" },
+  { key: "forecast", label: "預報", icon: "📅" },
   { key: "stations", label: "測站點位", icon: "📍" },
 ];
 

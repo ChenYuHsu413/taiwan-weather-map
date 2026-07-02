@@ -51,6 +51,27 @@ export default function WeatherLegend({ mode }: { mode: LayerKey }) {
     );
   }
 
+  if (mode === "forecast") {
+    return (
+      <div className="pointer-events-auto rounded-lg bg-panel p-3 shadow-lg backdrop-blur">
+        <div className="mb-2 text-xs font-semibold text-gray-100">
+          今明天氣預報
+        </div>
+        <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+          {WEATHER_LEGEND.map((it) => (
+            <div key={it.label} className="flex items-center gap-2">
+              <span className="text-sm">{it.icon}</span>
+              <span className="text-xs text-gray-300">{it.label}</span>
+            </div>
+          ))}
+        </div>
+        <div className="mt-2 border-t border-white/10 pt-2 text-[10px] text-gray-400">
+          徽章：天氣 + 高溫 · 💧降雨機率；點縣市看今明 36 小時
+        </div>
+      </div>
+    );
+  }
+
   let title = "";
   let stops: { color: string; label: string }[] = [];
 
