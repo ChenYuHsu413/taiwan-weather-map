@@ -21,7 +21,7 @@ Next.js 14 (App Router) · TypeScript · Tailwind CSS · Leaflet / React Leaflet
 - **雷達動畫**：地圖上的雷達動畫使用 RainViewer 免費 XYZ 圖磚。RainViewer 和底圖同為 Web Mercator，因此比 CWA 靜態 PNG `imageOverlay` 更容易精準對齊；播放控制則透過預載多個 `TileLayer`，切換 opacity 形成回放動畫。
 - **CWA 雷達爬蟲**：仍保留 `GET /api/radar` 作為補充/備援 endpoint，後端只抓公開、免登入的 CWA 雷達 PNG，並加上 Referer、快取、重試限制與 stale 回退。此 endpoint 是爬蟲示範，不是目前地圖雷達疊圖的主要來源。
 
-開發過程中的原始 prompt 與 agent 回應整理在 [claude-prompts.md](claude-prompts.md)。
+需求最早先與 ChatGPT 討論並整理成 [氣象資料網站建議.pdf](氣象資料網站建議.pdf)，再把整理後的 prompt 交給 Claude 進行開發。Claude 開發過程中的原始 prompt 與 agent 回應整理在 [claude-prompts.md](claude-prompts.md)。
 
 ## 快速開始
 
