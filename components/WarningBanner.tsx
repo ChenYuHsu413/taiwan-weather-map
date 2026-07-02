@@ -73,11 +73,15 @@ export default function WarningBanner() {
   if (!loaded) return null;
 
   const hasWarnings = warnings.length > 0;
+  // 收合時顯示的事件類型標籤（去重），例如「高溫」「降雨」「強風」。
+  const eventTypes = Array.from(
+    new Set(warnings.map((w) => w.event).filter(Boolean))
+  );
 
   return (
     <div className="pointer-events-auto w-[min(92vw,560px)] rounded-lg bg-panel shadow-lg backdrop-blur">
       <div className="flex items-center justify-between gap-2 px-3 py-2">
-        <div className="flex items-center gap-2 text-sm font-semibold text-white">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-semibold text-white">
           <span>{hasWarnings ? "⚠️" : "✅"}</span>
           <span>
             天氣特報
@@ -85,9 +89,27 @@ export default function WarningBanner() {
               <span className="ml-1 text-amber-300">{warnings.length} 則</span>
             )}
           </span>
-          <span className="text-[10px] font-normal text-gray-400">
-            來源：NCDR CAP 爬蟲 · 中央氣象署
-          </span>
+          {!open &&
+            eventTypes.slice(0, 4).map((e) => (
+              <span
+                key={e}
+                className={`rounded px-1.5 py-0.5 text-[10px] font-normal ${eventClass(
+                  e
+                )}`}
+              >
+                {e}
+              </span>
+            ))}
+          {!open && eventTypes.length > 4 && (
+            <span className="text-[10px] font-normal text-gray-400">
+              +{eventTypes.length - 4}
+            </span>
+          )}
+          {open && (
+            <span className="text-[10px] font-normal text-gray-400">
+              來源：NCDR CAP 爬蟲 · 中央氣象署
+            </span>
+          )}
         </div>
         {hasWarnings && (
           <button
