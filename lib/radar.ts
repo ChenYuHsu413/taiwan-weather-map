@@ -29,12 +29,9 @@ export interface RadarResult {
 }
 
 function recordCrawlerLog(input: Parameters<typeof saveCrawlerLog>[0]): void {
-  try {
-    saveCrawlerLog(input);
-  } catch {
-    // Logging is for audit/demo only; never break the image endpoint because DB
-    // logging failed.
-  }
+  // Fire-and-forget; logging is for audit/demo only and must never break the
+  // image endpoint (nor leave an unhandled promise rejection).
+  void saveCrawlerLog(input).catch(() => {});
 }
 
 async function fetchRadar(): Promise<RadarCache> {

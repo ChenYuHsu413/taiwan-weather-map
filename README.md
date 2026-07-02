@@ -9,7 +9,7 @@
 - **沒有依賴 Windy**：未使用 Windy API、Windy 圖磚、Windy 資料或 iframe/embed。
 - **平滑氣象填色場**：將 CWA 離散測站資料透過 IDW 內插成連續色階，再裁切到台灣陸地範圍，呈現接近專業氣象圖層的視覺效果。
 - **粒子風場動畫**：使用 NOAA GFS 10m u/v 風場格點，前端以 Canvas 繪製流線粒子，做出類似 Windy 的動態風場。
-- **完整資料管線**：後端包含 API 抓取、資料清洗、快取、SQLite 紀錄與 fallback；前端則負責互動地圖、圖層控制、動畫與響應式儀表板。
+- **完整資料管線**：後端包含 API 抓取、資料清洗、快取、Postgres 紀錄與 fallback；前端則負責互動地圖、圖層控制、動畫與響應式儀表板。
 
 ## Demo
 
@@ -63,7 +63,7 @@ npm run dev
 | `CWA_PRIMARY_DATASET` | 主要資料集 | `O-A0003-001` |
 | `CWA_FALLBACK_DATASET` | 備援資料集 | `O-A0001-001` |
 | `WEATHER_CACHE_TTL_SECONDS` | 快取存活秒數 | `600`（10 分鐘） |
-| `WEATHER_DB_PATH` | SQLite 檔案路徑。本機預設 `.cache/weather.db`；Vercel 預設 `/tmp/weather.db` | 依環境自動決定 |
+| `POSTGRES_URL` | Neon / Vercel Postgres 連線字串。**部署到 Vercel 時由 Neon 整合自動注入**；本機開發填 Neon 的 Pooled 連線字串。亦相容 `DATABASE_URL` | 由 Neon 整合提供 |
 
 > API key 只在後端使用，不會傳到前端。`.env.local` 已被 `.gitignore` 排除。
 
@@ -75,15 +75,15 @@ app/
   api/weather/current/route.ts   GET：回傳 GeoJSON + summary
   api/weather/history/route.ts   GET：單一測站歷史時序（?stationId=&limit=）
   api/radar/route.ts             GET：代理回傳最新雷達回波 PNG（後端爬蟲）
-  api/crawler/logs/route.ts      GET：回傳最近的網站爬蟲 + SQLite 紀錄
+  api/crawler/logs/route.ts      GET：回傳最近的網站爬蟲 + Postgres 紀錄
 lib/
   cwa.ts               CWA API client（timeout、錯誤處理、primary/fallback）
   weather-transform.ts 原始 JSON → 統一 GeoJSON（缺值轉 null、去重、座標驗證）
   weather-summary.ts   全台摘要統計
-  weather-cache.ts     10 分鐘快取（記憶體 + SQLite + stale 回退）
-  weather-store.ts     SQLite 儲存：寫快照 + 逐站時序、讀最新、查歷史
-  db.ts                SQLite 連線單例 + schema
-  crawler-store.ts     SQLite 儲存：網站爬蟲執行紀錄
+  weather-cache.ts     10 分鐘快取（記憶體 + Postgres + stale 回退）
+  weather-store.ts     Postgres 儲存：寫快照 + 逐站時序、讀最新、查歷史
+  db.ts                Postgres（Neon）連線 + schema
+  crawler-store.ts     Postgres 儲存：網站爬蟲執行紀錄
   radar.ts             CWA 雷達圖爬蟲（帶 Referer/UA、快取、頻率限制、stale 回退）
   color-scale.ts       氣溫/風速/濕度/雨量色階
   types.ts             TypeScript 型別
@@ -102,12 +102,12 @@ public/data/taiwan-counties.geojson  縣市界線（見下方來源）
 ## 資料流與快取
 
 1. 前端呼叫 `GET /api/weather/current`。
-2. 後端檢查快取：**未超過 10 分鐘 → 直接回傳快取**（記憶體優先，其次 SQLite 最新快照）。
+2. 後端檢查快取：**未超過 10 分鐘 → 直接回傳快取**（記憶體優先，其次 Postgres 最新快照）。
 3. 超過或無快取 → 呼叫 CWA `O-A0003-001`。若失敗或有效測站 < 30 筆 → fallback 到 `O-A0001-001`。
-4. 清洗 → 轉 GeoJSON → 寫入 SQLite（一筆快照 + 逐站時序觀測）→ 回傳。
+4. 清洗 → 轉 GeoJSON → 寫入 Postgres（一筆快照 + 逐站時序觀測）→ 回傳。
 5. 外部 API 失敗但有舊快取 → 回傳舊快取並標示 `stale: true`（前端顯示「舊快取」提示）。
 
-快取採 in-flight 去重，避免多個請求同時打 CWA。本機 DB 檔位於 `.cache/weather.db`（已 gitignore）；部署到 Vercel 時，因為 `/var/task` 是唯讀檔案系統，SQLite 會自動改寫到 `/tmp/weather.db`。`/tmp` 是 serverless 暫存空間，冷啟動或換執行個體時紀錄可能會消失；若需要長期保存，應改接外部資料庫（例如 Turso、Vercel Postgres、Neon 等）。
+快取採 in-flight 去重，避免多個請求同時打 CWA。資料持久化到 **Neon Postgres**（透過 Vercel Storage 整合連結，連線字串自動注入為 `POSTGRES_URL`/`DATABASE_URL`）；本機與線上連同一個雲端資料庫。因為是託管型共享 DB，冷啟動或換 serverless 執行個體後仍能讀回最新/舊快照，不像先前的 `/tmp` SQLite 會在換實例時遺失——這也是讓「使用者請求只讀 DB、不再同步卡在 CWA 而回 502」得以成立的關鍵。
 
 ## 資料來源與爬蟲
 
@@ -115,17 +115,17 @@ public/data/taiwan-counties.geojson  縣市界線（見下方來源）
 - **雷達動畫（地圖圖層）**：使用 [RainViewer](https://www.rainviewer.com/) 免費雷達圖磚（標準 XYZ tiles）。圖磚與底圖同為 Web Mercator，**天生正確對齊**。前端向 `api.rainviewer.com` 取過去約 2 小時的影格清單（每 10 分一格），預載各影格 `TileLayer` 並依索引切換 opacity 播放（切換瞬間完成、無閃爍）；底部控制列可播放/暫停與拖曳時間軸。
 - **CWA 雷達爬蟲（補充 endpoint）**：[lib/radar.ts](lib/radar.ts) + `GET /api/radar`。CWA 雷達合成圖為公開靜態 PNG，但官網擋裸連結（缺 `Referer` 回 403），故後端帶正確 `Referer` 抓取公開影像並代理。**只抓公開/免登入影像**，含 10 分鐘快取、失敗後 60 秒最短重試、stale 回退。此為爬蟲示範與備援；未用於地圖疊圖，因為 CWA 預算圖的投影/地理範圍無公開文件（此授權層級也無雷達 open data 權限），`imageOverlay` 無法精準對齊。
 
-### 爬蟲 + SQLite 展示
+### 爬蟲 + 資料庫展示
 
-為了展示課堂要求的「網站爬蟲 + SQLite」，首頁左上加入 **CWA 爬蟲紀錄** 面板，可手動執行一次中央氣象署網站爬蟲。流程如下：
+為了展示課堂要求的「網站爬蟲 + 資料庫」，首頁左上加入 **CWA 爬蟲紀錄** 面板，可手動執行一次中央氣象署網站爬蟲。流程如下：
 
 1. 前端按下「執行爬蟲」後呼叫 `GET /api/radar`。
 2. 後端以 `User-Agent` 與 `Referer` 向 CWA 網站抓取公開雷達 PNG：`https://www.cwa.gov.tw/Data/radar/CV1_3600.png`。
-3. 抓取結果寫入 SQLite 的 `crawler_logs` 表，欄位包含來源名稱、來源網址、抓取時間、狀態（`success` / `failed` / `cache_hit` / `stale`）、HTTP 狀態碼、content type、檔案大小、是否快取、是否 stale、耗時與錯誤訊息。
+3. 抓取結果寫入 Postgres 的 `crawler_logs` 表，欄位包含來源名稱、來源網址、抓取時間、狀態（`success` / `failed` / `cache_hit` / `stale`）、HTTP 狀態碼、content type、檔案大小、是否快取、是否 stale、耗時與錯誤訊息。
 4. `GET /api/crawler/logs` 讀取最近紀錄，前端面板顯示最近抓取時間、狀態、HTTP 狀態與檔案大小。
 5. 若 CWA 網站暫時無法取得新圖資，系統會回傳記憶體快取中的最後一次成功圖資並記錄 `stale`，避免前端直接中斷。
 
-> Vercel 注意事項：SQLite 只能寫入 `/tmp`，不能寫入專案目錄下的 `.cache`。此專案已在 Vercel 自動使用 `/tmp/weather.db`，適合展示爬蟲紀錄流程；但 `/tmp` 不保證永久保存。
+> Vercel 注意事項：資料寫入 **Neon Postgres**（於 Vercel 專案的 Storage 分頁連結 Neon 後自動注入連線字串），跨 serverless 實例共享且永久保存，不再受 `/tmp` 暫存空間「換實例即遺失」的限制。
 
 ## 縣市 GeoJSON 來源
 
@@ -134,9 +134,9 @@ public/data/taiwan-counties.geojson  縣市界線（見下方來源）
 ## 已完成項目
 
 - [x] `/api/weather/current` 取得 CWA 資料（primary + fallback）
-- [x] 後端 10 分鐘快取（記憶體 + SQLite）+ stale 舊資料回退
+- [x] 後端 10 分鐘快取（記憶體 + Postgres）+ stale 舊資料回退
 - [x] 原始資料清洗轉 GeoJSON（缺值 `-99`/`""`/`T` 處理、去重、座標驗證）
-- [x] SQLite 時序儲存：每次抓取 append 逐站觀測 → 累積歷史（`/api/weather/history`）
+- [x] Postgres 時序儲存：每次抓取 append 逐站觀測 → 累積歷史（`/api/weather/history`）
 - [x] Leaflet 地圖含台灣本島與離島初始視角
 - [x] 測站 marker + 點擊 popup（完整欄位，深色主題）
 - [x] 氣溫：逐像素 IDW 平滑填色場（填滿本島、山區內插補值）+ 分級數字標籤（縮太小時自動隱藏、放大看各站、中間看縣市均溫）
@@ -147,7 +147,7 @@ public/data/taiwan-counties.geojson  縣市界線（見下方來源）
 - [x] 底圖切換：深色 ↔ OpenStreetMap 街道圖
 - [x] 縣市界線 + hover 高亮 + 點擊 zoom
 - [x] 雷達回波動畫（RainViewer 圖磚，過去約 2 小時每 10 分一格；預設暫停於最新影格，可播放/暫停/拖曳時間軸；原生只取到 z7 再放大，避免外海「Zoom Level Not Supported」破圖）+ CWA 雷達爬蟲 endpoint
-- [x] CWA 網站爬蟲 + SQLite 紀錄：每次雷達爬蟲成功/失敗/快取/stale 都寫入 `crawler_logs`，並可由 `/api/crawler/logs` 與首頁面板檢視
+- [x] CWA 網站爬蟲 + Postgres 紀錄：每次雷達爬蟲成功/失敗/快取/stale 都寫入 `crawler_logs`，並可由 `/api/crawler/logs` 與首頁面板檢視
 - [x] 使用者定位（Geolocation）+ turf 判斷所在縣市並高亮
 - [x] 摘要面板（最高/最低溫、最大雨量、最大風速、測站數、更新時間、資料來源、是否快取）
 - [x] loading / API 錯誤 / 定位失敗的友善提示

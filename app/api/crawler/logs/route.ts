@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(
       {
         success: true,
-        logs: getCrawlerLogs(Number.isFinite(limit) ? limit : 20),
+        logs: await getCrawlerLogs(Number.isFinite(limit) ? limit : 20),
       },
       { headers: { "Cache-Control": "no-store" } }
     );

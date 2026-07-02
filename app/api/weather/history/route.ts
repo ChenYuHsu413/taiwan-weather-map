@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
     : 144;
 
   try {
-    const history = getStationHistory(stationId, limit);
+    const history = await getStationHistory(stationId, limit);
     return NextResponse.json(
       { success: true, ...history, count: history.rows.length },
       { headers: { "Cache-Control": "no-store" } }

@@ -1,5 +1,6 @@
-// 10 分鐘快取層：記憶體優先，並持久化到本地 JSON 檔（伺服器重啟後仍能回傳 stale 舊資料）。
-// 同時處理「同一時間多個請求只打一次 CWA」的併發去重。
+// 按需快取層：記憶體優先，並持久化到 Neon Postgres（跨 serverless 實例共享，
+// 冷啟動或換執行個體後仍能回讀最新/舊資料）。
+// 同時處理「同一時間多個請求只打一次 CWA」的併發去重，以及抓取失敗時回退舊資料。
 
 import type { CachedWeather } from "./types";
 import { fetchDataset, CwaError } from "./cwa";
@@ -30,19 +31,19 @@ function isFresh(entry: CachedWeather): boolean {
   return ageSeconds(entry.fetchedAt) < TTL_SECONDS;
 }
 
-function readPersistentCache(): CachedWeather | null {
+async function readPersistentCache(): Promise<CachedWeather | null> {
   try {
-    return loadLatestSnapshot();
+    return await loadLatestSnapshot();
   } catch {
     return null;
   }
 }
 
-function writePersistentCache(entry: CachedWeather): void {
+async function writePersistentCache(entry: CachedWeather): Promise<void> {
   try {
-    saveSnapshot(entry);
+    await saveSnapshot(entry);
   } catch {
-    // 寫入 DB 失敗不致命（例如唯讀環境），記憶體快取仍可運作。
+    // 寫入 DB 失敗不致命，記憶體快取仍可運作。
   }
 }
 
@@ -86,8 +87,8 @@ async function fetchFresh(): Promise<CachedWeather> {
 
 /**
  * 取得當前氣象資料。
- * 流程：記憶體/檔案快取新鮮 → 直接回傳；過期或無 → 抓取新資料；
- * 抓取失敗但有舊快取 → 回傳舊快取並標示 stale。
+ * 流程：記憶體/DB 快取新鮮 → 直接回傳；過期或無 → 抓取新資料；
+ * 抓取失敗但有舊快取 → 回傳舊快取並標示 stale（避免 502）。
  */
 export async function getCurrentWeather(): Promise<CacheResult> {
   // 1. 記憶體快取新鮮，直接回傳。
@@ -95,9 +96,9 @@ export async function getCurrentWeather(): Promise<CacheResult> {
     return { payload: memoryCache, cached: true, stale: false };
   }
 
-  // 2. 記憶體沒有時，載入持久化快取（伺服器剛重啟的情況）。
+  // 2. 記憶體沒有時，載入持久化快取（伺服器剛重啟／換實例的情況）。
   if (!memoryCache) {
-    const persisted = readPersistentCache();
+    const persisted = await readPersistentCache();
     if (persisted) {
       memoryCache = persisted;
       if (isFresh(persisted)) {
@@ -116,7 +117,7 @@ export async function getCurrentWeather(): Promise<CacheResult> {
   try {
     const fresh = await inflight;
     memoryCache = fresh;
-    writePersistentCache(fresh);
+    await writePersistentCache(fresh);
     return { payload: fresh, cached: false, stale: false };
   } catch (err) {
     // 4. 抓取失敗：若有舊快取，回傳 stale 舊資料。

@@ -1,77 +1,112 @@
-// SQLite 儲存層：寫入快照（供快取）+ 逐測站時序觀測（供歷史查詢）。
+// Postgres 儲存層：寫入快照（供快取）+ 逐測站時序觀測（供歷史查詢）。
 
-import { getDb } from "./db";
+import { sql, db, ensureSchema } from "./db";
 import type { CachedWeather } from "./types";
 
+const OBS_COLUMNS = [
+  "snapshot_id",
+  "station_id",
+  "station_name",
+  "county",
+  "town",
+  "observed_at",
+  "lng",
+  "lat",
+  "temperature",
+  "humidity",
+  "pressure",
+  "wind_speed",
+  "wind_direction",
+  "gust_speed",
+  "precipitation",
+  "uvi",
+  "weather",
+] as const;
+
 /** 寫入一次抓取結果：一筆 snapshot + 該批 observations，於單一交易內完成。 */
-export function saveSnapshot(entry: CachedWeather): void {
-  const db = getDb();
+export async function saveSnapshot(entry: CachedWeather): Promise<void> {
+  await ensureSchema();
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
 
-  const insertSnapshot = db.prepare(
-    `INSERT INTO snapshots (fetched_at, updated_at, source, station_count, payload)
-     VALUES (?, ?, ?, ?, ?)`
-  );
-  const insertObs = db.prepare(
-    `INSERT INTO observations (
-       snapshot_id, station_id, station_name, county, town, observed_at,
-       lng, lat, temperature, humidity, pressure, wind_speed, wind_direction,
-       gust_speed, precipitation, uvi, weather
-     ) VALUES (
-       @snapshot_id, @station_id, @station_name, @county, @town, @observed_at,
-       @lng, @lat, @temperature, @humidity, @pressure, @wind_speed, @wind_direction,
-       @gust_speed, @precipitation, @uvi, @weather
-     )`
-  );
-
-  const tx = db.transaction((e: CachedWeather) => {
-    const info = insertSnapshot.run(
-      e.fetchedAt,
-      e.updatedAt,
-      e.source,
-      e.stationCount,
-      JSON.stringify(e)
+    const { rows } = await client.query(
+      `INSERT INTO snapshots (fetched_at, updated_at, source, station_count, payload)
+       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+      [
+        entry.fetchedAt,
+        entry.updatedAt,
+        entry.source,
+        entry.stationCount,
+        JSON.stringify(entry),
+      ]
     );
-    const snapshotId = Number(info.lastInsertRowid);
-    for (const f of e.data.features) {
-      const p = f.properties;
-      const [lng, lat] = f.geometry.coordinates;
-      insertObs.run({
-        snapshot_id: snapshotId,
-        station_id: p.stationId,
-        station_name: p.stationName,
-        county: p.county,
-        town: p.town,
-        observed_at: p.observedAt,
-        lng,
-        lat,
-        temperature: p.temperature,
-        humidity: p.humidity,
-        pressure: p.pressure,
-        wind_speed: p.windSpeed,
-        wind_direction: p.windDirection,
-        gust_speed: p.gustSpeed,
-        precipitation: p.precipitation,
-        uvi: p.uvi,
-        weather: p.weather,
-      });
-    }
-  });
+    const snapshotId = Number(rows[0].id);
 
-  tx(entry);
+    const features = entry.data.features;
+    if (features.length > 0) {
+      const cols = OBS_COLUMNS.length;
+      const values: unknown[] = [];
+      const tuples: string[] = [];
+      features.forEach((f, i) => {
+        const p = f.properties;
+        const [lng, lat] = f.geometry.coordinates;
+        const base = i * cols;
+        tuples.push(
+          `(${Array.from({ length: cols }, (_, k) => `$${base + k + 1}`).join(", ")})`
+        );
+        values.push(
+          snapshotId,
+          p.stationId,
+          p.stationName,
+          p.county,
+          p.town,
+          p.observedAt,
+          lng,
+          lat,
+          p.temperature,
+          p.humidity,
+          p.pressure,
+          p.windSpeed,
+          p.windDirection,
+          p.gustSpeed,
+          p.precipitation,
+          p.uvi,
+          p.weather
+        );
+      });
+      await client.query(
+        `INSERT INTO observations (${OBS_COLUMNS.join(", ")}) VALUES ${tuples.join(", ")}`,
+        values
+      );
+    }
+
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 /** 讀取最新一筆快照（供快取回讀）。無資料回 null。 */
-export function loadLatestSnapshot(): CachedWeather | null {
-  const db = getDb();
-  const row = db
-    .prepare(`SELECT payload FROM snapshots ORDER BY fetched_at DESC LIMIT 1`)
-    .get() as { payload: string } | undefined;
-  if (!row) return null;
-  try {
-    return JSON.parse(row.payload) as CachedWeather;
-  } catch {
-    return null;
+export async function loadLatestSnapshot(): Promise<CachedWeather | null> {
+  await ensureSchema();
+  const { rows } = await sql<{ payload: CachedWeather | string }>`
+    SELECT payload FROM snapshots ORDER BY fetched_at DESC LIMIT 1
+  `;
+  if (rows.length === 0) return null;
+  const payload = rows[0].payload;
+  // JSONB 欄位會由驅動自動 parse 成物件；字串則手動 parse 以防萬一。
+  if (typeof payload === "string") {
+    try {
+      return JSON.parse(payload) as CachedWeather;
+    } catch {
+      return null;
+    }
   }
+  return payload;
 }
 
 export interface StationHistoryRow {
@@ -87,24 +122,27 @@ export interface StationHistoryRow {
 }
 
 /** 查詢單一測站的歷史時序（最近 limit 筆，時間新到舊）。 */
-export function getStationHistory(
+export async function getStationHistory(
   stationId: string,
   limit = 144
-): { stationId: string; stationName: string | null; rows: StationHistoryRow[] } {
-  const db = getDb();
-  const rows = db
-    .prepare(
-      `SELECT o.station_name AS stationName, o.observed_at AS observedAt,
-              s.fetched_at AS fetchedAt, o.temperature, o.humidity, o.pressure,
-              o.wind_speed AS windSpeed, o.wind_direction AS windDirection,
-              o.gust_speed AS gustSpeed, o.precipitation
-       FROM observations o
-       JOIN snapshots s ON s.id = o.snapshot_id
-       WHERE o.station_id = ?
-       ORDER BY s.fetched_at DESC
-       LIMIT ?`
-    )
-    .all(stationId, limit) as (StationHistoryRow & { stationName: string | null })[];
+): Promise<{
+  stationId: string;
+  stationName: string | null;
+  rows: StationHistoryRow[];
+}> {
+  await ensureSchema();
+  const safeLimit = Math.min(Math.max(Math.trunc(limit), 1), 1000);
+  const { rows } = await sql<StationHistoryRow & { stationName: string | null }>`
+    SELECT o.station_name AS "stationName", o.observed_at AS "observedAt",
+           s.fetched_at AS "fetchedAt", o.temperature, o.humidity, o.pressure,
+           o.wind_speed AS "windSpeed", o.wind_direction AS "windDirection",
+           o.gust_speed AS "gustSpeed", o.precipitation
+    FROM observations o
+    JOIN snapshots s ON s.id = o.snapshot_id
+    WHERE o.station_id = ${stationId}
+    ORDER BY s.fetched_at DESC
+    LIMIT ${safeLimit}
+  `;
 
   return {
     stationId,
