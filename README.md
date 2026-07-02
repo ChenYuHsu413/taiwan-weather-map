@@ -61,6 +61,7 @@ app/
   api/weather/current/route.ts   GET：回傳 GeoJSON + summary
   api/weather/history/route.ts   GET：單一測站歷史時序（?stationId=&limit=）
   api/radar/route.ts             GET：代理回傳最新雷達回波 PNG（後端爬蟲）
+  api/crawler/logs/route.ts      GET：回傳最近的網站爬蟲 + SQLite 紀錄
 lib/
   cwa.ts               CWA API client（timeout、錯誤處理、primary/fallback）
   weather-transform.ts 原始 JSON → 統一 GeoJSON（缺值轉 null、去重、座標驗證）
@@ -68,12 +69,14 @@ lib/
   weather-cache.ts     10 分鐘快取（記憶體 + SQLite + stale 回退）
   weather-store.ts     SQLite 儲存：寫快照 + 逐站時序、讀最新、查歷史
   db.ts                SQLite 連線單例 + schema
+  crawler-store.ts     SQLite 儲存：網站爬蟲執行紀錄
   radar.ts             CWA 雷達圖爬蟲（帶 Referer/UA、快取、頻率限制、stale 回退）
   color-scale.ts       氣溫/風速/濕度/雨量色階
   types.ts             TypeScript 型別
 components/
   WeatherMap.tsx           Leaflet 地圖（底圖切換、markers、風向箭頭、縣市界線、定位、雷達疊圖）
   InterpolatedField.tsx    逐像素 IDW 內插填色場（氣溫/雨量，類 Windy 平滑漸層，裁切到陸地）
+  CrawlerLogPanel.tsx      CWA 網站爬蟲紀錄面板（可手動執行爬蟲）
   WeatherLayerControl.tsx  圖層切換 + 雷達/縣市開關 + 定位按鈕
   WeatherSummaryPanel.tsx  左上摘要面板
   WeatherStationPopup.tsx  測站 popup 內容
@@ -97,6 +100,16 @@ public/data/taiwan-counties.geojson  縣市界線（見下方來源）
 - **雷達動畫（地圖圖層）**：使用 [RainViewer](https://www.rainviewer.com/) 免費雷達圖磚（標準 XYZ tiles）。圖磚與底圖同為 Web Mercator，**天生正確對齊**。前端向 `api.rainviewer.com` 取過去約 2 小時的影格清單（每 10 分一格），預載各影格 `TileLayer` 並依索引切換 opacity 播放（切換瞬間完成、無閃爍）；底部控制列可播放/暫停與拖曳時間軸。
 - **CWA 雷達爬蟲（補充 endpoint）**：[lib/radar.ts](lib/radar.ts) + `GET /api/radar`。CWA 雷達合成圖為公開靜態 PNG，但官網擋裸連結（缺 `Referer` 回 403），故後端帶正確 `Referer` 抓取公開影像並代理。**只抓公開/免登入影像**，含 10 分鐘快取、失敗後 60 秒最短重試、stale 回退。此為爬蟲示範與備援；未用於地圖疊圖，因為 CWA 預算圖的投影/地理範圍無公開文件（此授權層級也無雷達 open data 權限），`imageOverlay` 無法精準對齊。
 
+### 爬蟲 + SQLite 展示
+
+為了展示課堂要求的「網站爬蟲 + SQLite」，首頁左上加入 **CWA 爬蟲紀錄** 面板，可手動執行一次中央氣象署網站爬蟲。流程如下：
+
+1. 前端按下「執行爬蟲」後呼叫 `GET /api/radar`。
+2. 後端以 `User-Agent` 與 `Referer` 向 CWA 網站抓取公開雷達 PNG：`https://www.cwa.gov.tw/Data/radar/CV1_3600.png`。
+3. 抓取結果寫入 SQLite 的 `crawler_logs` 表，欄位包含來源名稱、來源網址、抓取時間、狀態（`success` / `failed` / `cache_hit` / `stale`）、HTTP 狀態碼、content type、檔案大小、是否快取、是否 stale、耗時與錯誤訊息。
+4. `GET /api/crawler/logs` 讀取最近紀錄，前端面板顯示最近抓取時間、狀態、HTTP 狀態與檔案大小。
+5. 若 CWA 網站暫時無法取得新圖資，系統會回傳記憶體快取中的最後一次成功圖資並記錄 `stale`，避免前端直接中斷。
+
 ## 縣市 GeoJSON 來源
 
 已放置於 `public/data/taiwan-counties.geojson`（來源：[g0v/twgeojson](https://github.com/g0v/twgeojson)，`twCounty2010.geo.json`，經 mapshaper 簡化至 ~400KB，屬性欄位 `COUNTYNAME`）。若要更新，下載後放到同一路徑即可。
@@ -116,6 +129,7 @@ public/data/taiwan-counties.geojson  縣市界線（見下方來源）
 - [x] 底圖切換：深色 ↔ OpenStreetMap 街道圖
 - [x] 縣市界線 + hover 高亮 + 點擊 zoom
 - [x] 雷達回波動畫（RainViewer 圖磚，過去約 2 小時每 10 分一格；預設暫停於最新影格，可播放/暫停/拖曳時間軸；原生只取到 z7 再放大，避免外海「Zoom Level Not Supported」破圖）+ CWA 雷達爬蟲 endpoint
+- [x] CWA 網站爬蟲 + SQLite 紀錄：每次雷達爬蟲成功/失敗/快取/stale 都寫入 `crawler_logs`，並可由 `/api/crawler/logs` 與首頁面板檢視
 - [x] 使用者定位（Geolocation）+ turf 判斷所在縣市並高亮
 - [x] 摘要面板（最高/最低溫、最大雨量、最大風速、測站數、更新時間、資料來源、是否快取）
 - [x] loading / API 錯誤 / 定位失敗的友善提示

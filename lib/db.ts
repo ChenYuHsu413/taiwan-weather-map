@@ -49,6 +49,25 @@ function createConnection(): Database.Database {
     );
     CREATE INDEX IF NOT EXISTS idx_obs_station_time
       ON observations (station_id, observed_at DESC);
+
+    -- Website crawler audit trail. This is intentionally separate from the
+    -- structured CWA API snapshots so the crawler + SQLite workflow is visible.
+    CREATE TABLE IF NOT EXISTS crawler_logs (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      source_name   TEXT NOT NULL,
+      source_url    TEXT NOT NULL,
+      fetched_at    TEXT NOT NULL,
+      status        TEXT NOT NULL,
+      http_status   INTEGER,
+      content_type  TEXT,
+      file_size     INTEGER,
+      from_cache    INTEGER NOT NULL DEFAULT 0,
+      stale         INTEGER NOT NULL DEFAULT 0,
+      duration_ms   INTEGER,
+      error_message TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_crawler_logs_fetched_at
+      ON crawler_logs (fetched_at DESC);
   `);
 
   return db;

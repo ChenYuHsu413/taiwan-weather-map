@@ -6,6 +6,7 @@ import type { LayerKey, WeatherApiResponse } from "@/lib/types";
 import WeatherLayerControl from "@/components/WeatherLayerControl";
 import WeatherSummaryPanel from "@/components/WeatherSummaryPanel";
 import WeatherLegend from "@/components/WeatherLegend";
+import CrawlerLogPanel from "@/components/CrawlerLogPanel";
 
 // Leaflet 依賴 window，需關閉 SSR。
 const WeatherMap = dynamic(() => import("@/components/WeatherMap"), {
@@ -174,8 +175,9 @@ export default function Home() {
 
       {/* 左上：摘要面板 */}
       {meta && (
-        <div className="absolute left-4 top-4 z-[900]">
+        <div className="absolute left-4 top-4 z-[900] flex flex-col gap-3">
           <WeatherSummaryPanel meta={meta} />
+          <CrawlerLogPanel />
         </div>
       )}
 
