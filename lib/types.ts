@@ -76,6 +76,5 @@ export type LayerKey =
   | "wind"
   | "humidity"
   | "weather"
-  | "forecast"
   | "stations"
   | "counties";

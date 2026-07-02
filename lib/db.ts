@@ -92,14 +92,4 @@ async function createSchema(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_warnings_expires
       ON weather_warnings (expires DESC);
   `;
-
-  // 各縣市今明 36 小時天氣預報（CWA F-C0032-001）。以縣市為主鍵，重抓即 upsert。
-  // periods 存該縣市 3 個時段的預報陣列（天氣、溫度區間、降雨機率、舒適度）。
-  await sql`
-    CREATE TABLE IF NOT EXISTS county_forecast (
-      county     TEXT PRIMARY KEY,
-      periods    JSONB NOT NULL,
-      updated_at TIMESTAMPTZ NOT NULL
-    );
-  `;
 }
