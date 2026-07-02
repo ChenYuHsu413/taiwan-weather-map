@@ -13,6 +13,8 @@
 
 ## Demo
 
+![台灣即時氣象視覺化地圖 — 氣溫填色場與測站](docs/screenshot.png)
+
 線上展示：https://taiwan-weather-map.vercel.app/
 
 ## 技術棧
