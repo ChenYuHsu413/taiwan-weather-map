@@ -5,8 +5,12 @@ import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
 
-const DB_DIR = path.join(process.cwd(), ".cache");
-const DB_PATH = path.join(DB_DIR, "weather.db");
+const DEFAULT_DB_PATH =
+  process.env.VERCEL === "1"
+    ? path.join("/tmp", "weather.db")
+    : path.join(process.cwd(), ".cache", "weather.db");
+const DB_PATH = process.env.WEATHER_DB_PATH || DEFAULT_DB_PATH;
+const DB_DIR = path.dirname(DB_PATH);
 
 function createConnection(): Database.Database {
   fs.mkdirSync(DB_DIR, { recursive: true });

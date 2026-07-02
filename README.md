@@ -17,6 +17,8 @@ Next.js 14 (App Router) · TypeScript · Tailwind CSS · Leaflet / React Leaflet
 - **地圖引擎**：使用 Leaflet / React Leaflet 呈現互動地圖、圖層切換、測站 popup、使用者定位與縣市邊界。
 - **即時測站資料**：使用中央氣象署 CWA 開放資料 API（`O-A0003-001` 優先，`O-A0001-001` fallback），後端統一清洗成 GeoJSON，並以 10 分鐘快取降低外部 API 壓力。
 - **平滑氣溫/雨量場**：前端在 [InterpolatedField.tsx](components/InterpolatedField.tsx) 用逐像素 IDW（Inverse Distance Weighting）把離散測站值內插成連續點陣，再用縣市/陸地 polygon 裁切，以 `ImageOverlay` 疊到地圖上，做出接近 Windy 的平滑漸層效果。
+- **粒子風場動畫**：使用 NOAA GFS 0.25° 的 10m `UGRD` / `VGRD` 風場格點，先由 [scripts/fetch-gfs-wind.mjs](scripts/fetch-gfs-wind.mjs) 透過 NOMADS 下載台灣周邊 bbox 並轉成 [gfs-wind.json](public/data/gfs-wind.json)，前端再由 [WindParticleLayer.tsx](components/WindParticleLayer.tsx) 做雙線性內插並以 Canvas 粒子流線呈現。若格點資料載入失敗，才退回 CWA 測站風速/風向 IDW 作為備援。
+- **展示範圍調校**：風場圖層刻意限制縮放與拖曳範圍，並降低粒子移動速度與亮度，避免使用者拖到格點邊界或在低 zoom 時看到過度誇張的海面風速視覺。
 - **投影對齊**：填色點陣繪製時使用 Web Mercator / 反 Mercator 換算，和 Leaflet 的投影一致，避免海岸線附近出現系統性偏移。
 - **雷達動畫**：地圖上的雷達動畫使用 RainViewer 免費 XYZ 圖磚。RainViewer 和底圖同為 Web Mercator，因此比 CWA 靜態 PNG `imageOverlay` 更容易精準對齊；播放控制則透過預載多個 `TileLayer`，切換 opacity 形成回放動畫。
 - **CWA 雷達爬蟲**：仍保留 `GET /api/radar` 作為補充/備援 endpoint，後端只抓公開、免登入的 CWA 雷達 PNG，並加上 Referer、快取、重試限制與 stale 回退。此 endpoint 是爬蟲示範，不是目前地圖雷達疊圖的主要來源。
@@ -50,6 +52,7 @@ npm run dev
 | `CWA_PRIMARY_DATASET` | 主要資料集 | `O-A0003-001` |
 | `CWA_FALLBACK_DATASET` | 備援資料集 | `O-A0001-001` |
 | `WEATHER_CACHE_TTL_SECONDS` | 快取存活秒數 | `600`（10 分鐘） |
+| `WEATHER_DB_PATH` | SQLite 檔案路徑。本機預設 `.cache/weather.db`；Vercel 預設 `/tmp/weather.db` | 依環境自動決定 |
 
 > API key 只在後端使用，不會傳到前端。`.env.local` 已被 `.gitignore` 排除。
 
@@ -93,7 +96,7 @@ public/data/taiwan-counties.geojson  縣市界線（見下方來源）
 4. 清洗 → 轉 GeoJSON → 寫入 SQLite（一筆快照 + 逐站時序觀測）→ 回傳。
 5. 外部 API 失敗但有舊快取 → 回傳舊快取並標示 `stale: true`（前端顯示「舊快取」提示）。
 
-快取採 in-flight 去重，避免多個請求同時打 CWA。DB 檔位於 `.cache/weather.db`（已 gitignore）。
+快取採 in-flight 去重，避免多個請求同時打 CWA。本機 DB 檔位於 `.cache/weather.db`（已 gitignore）；部署到 Vercel 時，因為 `/var/task` 是唯讀檔案系統，SQLite 會自動改寫到 `/tmp/weather.db`。`/tmp` 是 serverless 暫存空間，冷啟動或換執行個體時紀錄可能會消失；若需要長期保存，應改接外部資料庫（例如 Turso、Vercel Postgres、Neon 等）。
 
 ## 資料來源與爬蟲
 
@@ -110,6 +113,8 @@ public/data/taiwan-counties.geojson  縣市界線（見下方來源）
 3. 抓取結果寫入 SQLite 的 `crawler_logs` 表，欄位包含來源名稱、來源網址、抓取時間、狀態（`success` / `failed` / `cache_hit` / `stale`）、HTTP 狀態碼、content type、檔案大小、是否快取、是否 stale、耗時與錯誤訊息。
 4. `GET /api/crawler/logs` 讀取最近紀錄，前端面板顯示最近抓取時間、狀態、HTTP 狀態與檔案大小。
 5. 若 CWA 網站暫時無法取得新圖資，系統會回傳記憶體快取中的最後一次成功圖資並記錄 `stale`，避免前端直接中斷。
+
+> Vercel 注意事項：SQLite 只能寫入 `/tmp`，不能寫入專案目錄下的 `.cache`。此專案已在 Vercel 自動使用 `/tmp/weather.db`，適合展示爬蟲紀錄流程；但 `/tmp` 不保證永久保存。
 
 ## 縣市 GeoJSON 來源
 
