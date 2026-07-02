@@ -138,7 +138,7 @@ public/data/taiwan-counties.geojson  縣市界線（見下方來源）
 - [x] Leaflet 地圖含台灣本島與離島初始視角
 - [x] 測站 marker + 點擊 popup（完整欄位，深色主題）
 - [x] 氣溫：逐像素 IDW 平滑填色場（填滿本島、山區內插補值）+ 分級數字標籤（縮太小時自動隱藏、放大看各站、中間看縣市均溫）
-- [x] 雨量：逐像素 IDW 平滑填色（類 Windy，只填有雨陸地）+ 測站點僅在有雨時顯示 + 色帶圖例
+- [x] 雨量：逐像素 IDW 平滑填色（類 Windy，只填有雨陸地）+ 色帶圖例（不顯示測站點）
 - [x] 風向箭頭（依 windDirection 旋轉、依 windSpeed 上色）
 - [x] 粒子風場動畫：優先使用 NOAA GFS 10m u/v 格點風場，前端雙線性內插後以 Canvas 粒子流線呈現類 Windy 的風場視覺；若格點資料失敗才退回 CWA 測站 IDW 近似
 - [x] 濕度色階圖層
