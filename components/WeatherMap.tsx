@@ -434,6 +434,51 @@ function aggregateWeatherByCounty(features: WeatherFeature[]): CountyWeather[] {
   });
 }
 
+/**
+ * 防止徽章重疊：任兩徽章太近就沿連線對稱推開，以鬆弛法迭代至穩定。
+ * 徽章「寬」約為「高」的 ~3 倍，故用橢圓間距——把經度壓縮 ASPECT 倍後做等向推擠，
+ * 等效於水平所需間距大於垂直，避免寬標籤左右疊住。質心近乎重合（市被縣包住）
+ * 時預設往垂直方向推。通用處理所有擁擠處，不寫死任何縣市名。
+ */
+function deconflictPositions(items: CountyWeather[]): CountyWeather[] {
+  const SEP = 0.13; // 壓縮空間中的最小間距（度）
+  const ASPECT = 2.8; // 徽章寬高比，橫向間距需求 ≈ SEP × ASPECT
+  const pts = items.map((it) => ({ ...it, sLng: it.lng / ASPECT }));
+  for (let iter = 0; iter < 40; iter++) {
+    let maxPush = 0;
+    for (let a = 0; a < pts.length; a++) {
+      for (let b = a + 1; b < pts.length; b++) {
+        let dLat = pts[b].lat - pts[a].lat;
+        let dLng = pts[b].sLng - pts[a].sLng;
+        let dist = Math.hypot(dLat, dLng);
+        if (dist >= SEP) continue;
+        if (dist < 1e-6) {
+          dLat = 1;
+          dLng = 0;
+          dist = 1;
+        }
+        const push = (SEP - dist) / 2;
+        if (push > maxPush) maxPush = push;
+        const uLat = dLat / dist;
+        const uLng = dLng / dist;
+        pts[a].lat -= uLat * push;
+        pts[a].sLng -= uLng * push;
+        pts[b].lat += uLat * push;
+        pts[b].sLng += uLng * push;
+      }
+    }
+    if (maxPush < 1e-4) break; // 已穩定
+  }
+  return pts.map((p) => ({
+    county: p.county,
+    emoji: p.emoji,
+    label: p.label,
+    count: p.count,
+    lat: p.lat,
+    lng: p.sLng * ASPECT,
+  }));
+}
+
 /** 天氣示意徽章 icon（emoji + 縣市名）。 */
 function weatherBadgeIcon(emoji: string, county: string): L.DivIcon {
   const html =
@@ -474,7 +519,10 @@ function WeatherConditionMarker({ w }: { w: CountyWeather }) {
 
 /** 天氣圖層：每縣市一個 emoji 徽章。 */
 function WeatherConditionLayer({ features }: { features: WeatherFeature[] }) {
-  const items = useMemo(() => aggregateWeatherByCounty(features), [features]);
+  const items = useMemo(
+    () => deconflictPositions(aggregateWeatherByCounty(features)),
+    [features]
+  );
   return (
     <>
       {items.map((w) => (
