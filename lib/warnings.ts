@@ -9,6 +9,8 @@ const FEED_URL = "https://alerts.ncdr.nat.gov.tw/RssAtomFeed.ashx";
 const CWA_AUTHOR = "中央氣象署";
 const TIMEOUT_MS = 20000;
 const TTL_SECONDS = Number(process.env.WARNINGS_CACHE_TTL_SECONDS ?? 600);
+// 爬取失敗時只快取很短時間，讓下次請求盡快重試（避免短暫抽風就卡 10 分鐘）。
+const STALE_RETRY_SECONDS = 60;
 
 export interface Warning {
   id: string;
@@ -182,8 +184,11 @@ async function getActiveFromDb(): Promise<Warning[]> {
  */
 export async function getWarnings(): Promise<WarningsResult> {
   const cache = globalForWarnings.__warningsCache;
-  if (cache && (Date.now() - cache.at) / 1000 < TTL_SECONDS) {
-    return { ...cache.result, cached: true };
+  if (cache) {
+    const ttl = cache.result.stale ? STALE_RETRY_SECONDS : TTL_SECONDS;
+    if ((Date.now() - cache.at) / 1000 < ttl) {
+      return { ...cache.result, cached: true };
+    }
   }
 
   await ensureSchema();
