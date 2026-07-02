@@ -1,0 +1,66 @@
+// SQLite 連線單例與 schema。僅在後端執行（route handler / server）。
+// 使用 globalThis 快取連線，避免 Next.js 開發模式 HMR 造成多重連線。
+
+import Database from "better-sqlite3";
+import path from "path";
+import fs from "fs";
+
+const DB_DIR = path.join(process.cwd(), ".cache");
+const DB_PATH = path.join(DB_DIR, "weather.db");
+
+function createConnection(): Database.Database {
+  fs.mkdirSync(DB_DIR, { recursive: true });
+  const db = new Database(DB_PATH);
+  db.pragma("journal_mode = WAL"); // 併發讀寫較穩定
+  db.pragma("synchronous = NORMAL");
+
+  db.exec(`
+    -- 每次成功抓取為一筆快照，payload 存已組好的對外 JSON（供快取快速回讀）。
+    CREATE TABLE IF NOT EXISTS snapshots (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      fetched_at   TEXT NOT NULL,   -- 後端實際抓取時間 (ISO8601)
+      updated_at   TEXT NOT NULL,   -- 觀測資料最新時間
+      source       TEXT NOT NULL,
+      station_count INTEGER NOT NULL,
+      payload      TEXT NOT NULL    -- CachedWeather 的 JSON
+    );
+    CREATE INDEX IF NOT EXISTS idx_snapshots_fetched_at
+      ON snapshots (fetched_at DESC);
+
+    -- 逐測站時序觀測。每次快照 append 一批，累積成歷史。
+    CREATE TABLE IF NOT EXISTS observations (
+      snapshot_id    INTEGER NOT NULL REFERENCES snapshots(id) ON DELETE CASCADE,
+      station_id     TEXT NOT NULL,
+      station_name   TEXT,
+      county         TEXT,
+      town           TEXT,
+      observed_at    TEXT,
+      lng            REAL,
+      lat            REAL,
+      temperature    REAL,
+      humidity       REAL,
+      pressure       REAL,
+      wind_speed     REAL,
+      wind_direction REAL,
+      gust_speed     REAL,
+      precipitation  REAL,
+      uvi            REAL,
+      weather        TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_obs_station_time
+      ON observations (station_id, observed_at DESC);
+  `);
+
+  return db;
+}
+
+const globalForDb = globalThis as unknown as {
+  __weatherDb?: Database.Database;
+};
+
+export function getDb(): Database.Database {
+  if (!globalForDb.__weatherDb) {
+    globalForDb.__weatherDb = createConnection();
+  }
+  return globalForDb.__weatherDb;
+}
