@@ -27,9 +27,11 @@ import {
 } from "@/lib/color-scale";
 import WeatherStationPopup from "./WeatherStationPopup";
 import InterpolatedField from "./InterpolatedField";
+import WindParticleLayer from "./WindParticleLayer";
 
 // 台灣本島 + 離島的初始視角範圍。
 const TAIWAN_BOUNDS = L.latLngBounds([21.7, 118.0], [25.5, 122.2]);
+const MAP_LIMITS = L.latLngBounds([19.5, 116.0], [27.8, 124.8]);
 
 interface UserLoc {
   lat: number;
@@ -46,6 +48,7 @@ interface Props {
   mode: LayerKey;
   basemap: "dark" | "osm";
   showCounties: boolean;
+  showWindStations: boolean;
   radar: { host: string; frames: RadarFrame[]; idx: number } | null;
   userLocation: UserLoc | null;
   onCountyDetected?: (county: string | null) => void;
@@ -112,20 +115,27 @@ function FlyToUser({ loc }: { loc: UserLoc | null }) {
   return null;
 }
 
-/** 產生風向箭頭 divIcon：箭頭指向風的去向，依風速上色。 */
 function windArrowIcon(direction: number, speed: number | null): L.DivIcon {
+  const value = speed ?? 0;
   const color = windColor(speed);
-  // CWA windDirection = 風的來向；箭頭指向去向 = 來向 + 180。
   const rotate = (direction + 180) % 360;
-  const svg =
-    `<svg width="26" height="26" viewBox="0 0 26 26" style="transform:rotate(${rotate}deg)">` +
-    `<path d="M13 2 L18 22 L13 17 L8 22 Z" fill="${color}" stroke="rgba(0,0,0,0.4)" stroke-width="0.5"/>` +
-    `</svg>`;
+  const size = Math.max(22, Math.min(42, 22 + value * 2.4));
+  const center = size / 2;
+  const tipY = 3;
+  const tailY = size - 4;
+  const wing = Math.max(4, size * 0.17);
+  const html =
+    `<div class="wind-vector-label" title="${value.toFixed(1)} m/s">` +
+    `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="transform:rotate(${rotate}deg)">` +
+    `<path d="M${center} ${tipY} L${center + wing} ${tailY} L${center} ${
+      tailY - wing * 0.9
+    } L${center - wing} ${tailY} Z" fill="${color}" stroke="rgba(255,255,255,0.85)" stroke-width="0.8"/>` +
+    `</svg></div>`;
   return L.divIcon({
     className: "wind-arrow",
-    html: svg,
-    iconSize: [26, 26],
-    iconAnchor: [13, 13],
+    html,
+    iconSize: [size, size],
+    iconAnchor: [center, center],
   });
 }
 
@@ -134,6 +144,7 @@ export default function WeatherMap({
   mode,
   basemap,
   showCounties,
+  showWindStations,
   radar,
   userLocation,
   onCountyDetected,
@@ -180,6 +191,10 @@ export default function WeatherMap({
   return (
     <MapContainer
       bounds={TAIWAN_BOUNDS}
+      maxBounds={MAP_LIMITS}
+      maxBoundsViscosity={0.85}
+      minZoom={7}
+      maxZoom={12}
       className="h-full w-full"
       zoomControl={false}
       preferCanvas
@@ -201,13 +216,19 @@ export default function WeatherMap({
         <InterpolatedField features={features} counties={counties} kind={mode} />
       )}
 
+      {mode === "wind" && <WindParticleLayer features={features} />}
+
       {showCounties && counties && (
         <CountyLayer counties={counties} highlight={userCounty} />
       )}
 
-      {mode === "wind"
-        ? features.map((f) => <WindMarker key={f.properties.stationId} f={f} />)
-        : mode === "temperature"
+      {mode === "wind" ? (
+        showWindStations ? (
+          features.map((f) => (
+            <WindStationArrow key={f.properties.stationId} f={f} />
+          ))
+        ) : null
+      ) : mode === "temperature"
         ? <TemperatureLayer features={features} />
         : (mode === "precipitation"
             ? features.filter((f) => (f.properties.precipitation ?? 0) > 0)
@@ -383,6 +404,10 @@ function StationCircle({ f, mode }: { f: WeatherFeature; mode: LayerKey }) {
     color = temperatureColor(p.temperature);
   } else if (mode === "humidity") {
     color = humidityColor(p.humidity);
+  } else if (mode === "wind") {
+    color = windColor(p.windSpeed);
+    radius = 2.5;
+    fillOpacity = 0.55;
   } else if (mode === "precipitation") {
     // 填色場已表達雨量大小，這裡只保留小點作為點擊目標。
     color = "#e0f2fe";
@@ -411,30 +436,19 @@ function StationCircle({ f, mode }: { f: WeatherFeature; mode: LayerKey }) {
   );
 }
 
-/** 風向箭頭 marker（風向無資料則退回小圓點）。 */
-function WindMarker({ f }: { f: WeatherFeature }) {
+function WindStationArrow({ f }: { f: WeatherFeature }) {
   const p = f.properties;
   const [lng, lat] = f.geometry.coordinates;
-  const dir = p.windDirection;
-
-  // hook 必須無條件呼叫：無風向時 icon 為 null。
   const icon = useMemo(
-    () => (dir === null ? null : windArrowIcon(dir, p.windSpeed)),
-    [dir, p.windSpeed]
+    () =>
+      p.windDirection === null
+        ? null
+        : windArrowIcon(p.windDirection, p.windSpeed),
+    [p.windDirection, p.windSpeed]
   );
 
-  if (icon === null) {
-    return (
-      <CircleMarker
-        center={[lat, lng]}
-        radius={4}
-        pathOptions={{ color: "#64748b", weight: 1, fillOpacity: 0.7 }}
-      >
-        <Popup>
-          <WeatherStationPopup p={p} />
-        </Popup>
-      </CircleMarker>
-    );
+  if (!icon) {
+    return <StationCircle f={f} mode="wind" />;
   }
 
   return (

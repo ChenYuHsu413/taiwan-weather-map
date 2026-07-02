@@ -17,6 +17,8 @@ interface Props {
   onBasemapChange: (b: "dark" | "osm") => void;
   showCounties: boolean;
   onToggleCounties: (v: boolean) => void;
+  showWindStations: boolean;
+  onToggleWindStations: (v: boolean) => void;
   showRadar: boolean;
   onToggleRadar: (v: boolean) => void;
   onLocate: () => void;
@@ -30,6 +32,8 @@ export default function WeatherLayerControl({
   onBasemapChange,
   showCounties,
   onToggleCounties,
+  showWindStations,
+  onToggleWindStations,
   showRadar,
   onToggleRadar,
   onLocate,
@@ -66,6 +70,18 @@ export default function WeatherLayerControl({
         />
         縣市界線
       </label>
+
+      {mode === "wind" && (
+        <label className="mt-2 flex cursor-pointer items-center gap-2 rounded-md bg-white/5 px-3 py-2 text-sm text-gray-200 hover:bg-white/10">
+          <input
+            type="checkbox"
+            checked={showWindStations}
+            onChange={(e) => onToggleWindStations(e.target.checked)}
+            className="accent-sky-500"
+          />
+          風場測站箭頭
+        </label>
+      )}
 
       <label className="mt-2 flex cursor-pointer items-center gap-2 rounded-md bg-white/5 px-3 py-2 text-sm text-gray-200 hover:bg-white/10">
         <input

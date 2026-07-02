@@ -31,6 +31,7 @@ export default function Home() {
   const [mode, setMode] = useState<LayerKey>("temperature");
   const [basemap, setBasemap] = useState<"dark" | "osm">("dark");
   const [showCounties, setShowCounties] = useState(true);
+  const [showWindStations, setShowWindStations] = useState(false);
   const [showRadar, setShowRadar] = useState(false);
 
   // 雷達動畫
@@ -133,6 +134,7 @@ export default function Home() {
             mode={mode}
             basemap={basemap}
             showCounties={showCounties}
+            showWindStations={showWindStations}
             radar={
               showRadar && radarData
                 ? {
@@ -190,6 +192,8 @@ export default function Home() {
           onBasemapChange={setBasemap}
           showCounties={showCounties}
           onToggleCounties={setShowCounties}
+          showWindStations={showWindStations}
+          onToggleWindStations={setShowWindStations}
           showRadar={showRadar}
           onToggleRadar={setShowRadar}
           onLocate={handleLocate}

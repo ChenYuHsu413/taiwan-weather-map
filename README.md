@@ -76,6 +76,7 @@ lib/
 components/
   WeatherMap.tsx           Leaflet 地圖（底圖切換、markers、風向箭頭、縣市界線、定位、雷達疊圖）
   InterpolatedField.tsx    逐像素 IDW 內插填色場（氣溫/雨量，類 Windy 平滑漸層，裁切到陸地）
+  WindParticleLayer.tsx    測站風速/風向 IDW 內插後的 Canvas 粒子風場動畫
   CrawlerLogPanel.tsx      CWA 網站爬蟲紀錄面板（可手動執行爬蟲）
   WeatherLayerControl.tsx  圖層切換 + 雷達/縣市開關 + 定位按鈕
   WeatherSummaryPanel.tsx  左上摘要面板
@@ -125,6 +126,7 @@ public/data/taiwan-counties.geojson  縣市界線（見下方來源）
 - [x] 氣溫：逐像素 IDW 平滑填色場（填滿本島、山區內插補值）+ 分級數字標籤（縮太小時自動隱藏、放大看各站、中間看縣市均溫）
 - [x] 雨量：逐像素 IDW 平滑填色（類 Windy，只填有雨陸地）+ 測站點僅在有雨時顯示 + 色帶圖例
 - [x] 風向箭頭（依 windDirection 旋轉、依 windSpeed 上色）
+- [x] 粒子風場動畫：將 CWA 測站風速/風向轉成向量，透過 IDW 內插為連續風場，再用 Canvas 粒子流線呈現類 Windy 的風場視覺
 - [x] 濕度色階圖層
 - [x] 底圖切換：深色 ↔ OpenStreetMap 街道圖
 - [x] 縣市界線 + hover 高亮 + 點擊 zoom
@@ -138,7 +140,7 @@ public/data/taiwan-counties.geojson  縣市界線（見下方來源）
 ## 尚未完成 / 後續可擴充
 
 - [ ] 颱風路徑、天氣警特報、預報圖層（架構已模組化，新增 `lib/` client + API route 即可）
-- [ ] 更接近 Windy 的粒子風場動畫（第一版刻意不做）
+- [ ] 接入真正的格點風場資料（例如數值模式 u/v 風場）取代測站 IDW 近似風場
 - [ ] 手機版面板收合最佳化（目前可用，但小螢幕面板較擠）
 - [ ] 測站搜尋 / 篩選
 - [ ] 單元測試（transform 邏輯已用臨時腳本驗證通過，尚未納入正式 test suite）
@@ -146,3 +148,22 @@ public/data/taiwan-counties.geojson  縣市界線（見下方來源）
 ## 重要備註：CWA 欄位對應
 
 `lib/cwa.ts` 與 `lib/weather-transform.ts` 依照 **CWA 新版（2023 後）測站 API 結構**（`records.Station[]`、`WeatherElement.AirTemperature` 等）撰寫，並已用合成資料驗證清洗邏輯。若實際 API 回傳欄位名稱有出入，**只需調整 `lib/weather-transform.ts` 的欄位取值**，其餘各層不受影響。
+## NOAA GFS 風場格點
+
+風場粒子動畫第一版已改成優先使用 **NOAA GFS 0.25°** 的 10m UGRD / VGRD 格點資料，不再只靠測站 IDW 近似。流程如下：
+
+1. 執行 `npm run fetch:gfs-wind`。
+2. [scripts/fetch-gfs-wind.mjs](scripts/fetch-gfs-wind.mjs) 會從 NOAA NOMADS `filter_gfs_0p25.pl` 抓台灣周邊較大 bbox：`110E-132E, 12N-34N`。
+3. 只下載 `lev_10_m_above_ground` 的 `UGRD` / `VGRD`，並在本機解 GRIB2 simple packing。
+4. 轉成前端可直接讀取的 [public/data/gfs-wind.json](public/data/gfs-wind.json)，格式包含 `grid.nx / ny / lo1 / la1 / dx / dy` 以及扁平化的 `u[]`、`v[]`。
+5. [components/WindParticleLayer.tsx](components/WindParticleLayer.tsx) 會先讀 `gfs-wind.json` 做雙線性內插；如果檔案不存在或載入失敗，才退回 CWA 測站風速/風向 IDW。
+
+這個版本仍然**沒有使用 Windy**。類似 Windy 的風流線效果，是由 NOAA GFS 的 u/v 格點風場 + Canvas 粒子動畫達成；測站箭頭只作為可選的觀測參考圖層。
+
+### 地圖縮放與拖曳限制
+
+風場展示刻意限制地圖操作範圍，這不是地圖壞掉：
+
+- 縮放限制在 `minZoom=7` 到 `maxZoom=12`，避免縮太遠時風場粒子變成整片高速流動，也避免放太近時看到 0.25° 格點解析度的限制。
+- 拖曳限制在台灣周邊海域 `19.5N-27.8N, 116E-124.8E`，保留澎湖、金門、馬祖與近海，但不讓畫面拖到 NOAA 風場格點邊緣。
+- NOAA 風場資料實際抓取範圍較大：`110E-132E, 12N-34N`，因此展示邊界內仍有足夠的粒子內插緩衝。

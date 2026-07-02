@@ -5,6 +5,7 @@
 next-env.d.ts
 tsconfig.tsbuildinfo
 .claude/
+session-export-*.zip
 
 # Local environment files and API keys
 .env
