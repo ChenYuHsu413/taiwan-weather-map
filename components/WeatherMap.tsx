@@ -49,6 +49,7 @@ interface Props {
   basemap: "dark" | "osm";
   showCounties: boolean;
   showWindStations: boolean;
+  showTempLabels: boolean;
   radar: { host: string; frames: RadarFrame[]; idx: number } | null;
   userLocation: UserLoc | null;
   onCountyDetected?: (county: string | null) => void;
@@ -145,6 +146,7 @@ export default function WeatherMap({
   basemap,
   showCounties,
   showWindStations,
+  showTempLabels,
   radar,
   userLocation,
   onCountyDetected,
@@ -229,10 +231,12 @@ export default function WeatherMap({
           ))
         ) : null
       ) : mode === "temperature" ? (
-        <TemperatureLayer features={features} />
+        showTempLabels ? (
+          <TemperatureLayer features={features} />
+        ) : null
       ) : mode === "weather" ? (
         <WeatherConditionLayer features={features} />
-      ) : mode === "precipitation" ? null : (
+      ) : mode === "precipitation" || mode === "radar" ? null : (
         features.map((f) => (
           <StationCircle key={f.properties.stationId} f={f} mode={mode} />
         ))

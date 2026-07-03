@@ -6,19 +6,8 @@ import {
   WIND_STOPS,
   HUMIDITY_STOPS,
   PRECIP_STOPS,
+  type ScaleStop,
 } from "@/lib/color-scale";
-
-function StopRow({ color, label }: { color: string; label: string }) {
-  return (
-    <div className="flex items-center gap-2">
-      <span
-        className="inline-block h-3 w-3 rounded-sm"
-        style={{ backgroundColor: color }}
-      />
-      <span className="text-xs text-gray-300">{label}</span>
-    </div>
-  );
-}
 
 const WEATHER_LEGEND = [
   { icon: "☀️", label: "晴" },
@@ -29,65 +18,76 @@ const WEATHER_LEGEND = [
   { icon: "🌫️", label: "霧/靄" },
 ];
 
+/** 橫向漸層色階條：左側單位 + 漸層 + 邊界數字（精簡示意，不逐段列出）。 */
+function GradientBar({ unit, stops }: { unit: string; stops: ScaleStop[] }) {
+  const gradient = `linear-gradient(to right, ${stops
+    .map((s) => s.color)
+    .join(", ")})`;
+  // 邊界值＝各段的上限（最後一段為 Infinity，略過）。
+  const bounds = stops.slice(0, -1).map((s) => s.max);
+  return (
+    <div className="pointer-events-auto w-60 rounded-lg bg-panel p-2.5 shadow-lg backdrop-blur">
+      <div className="flex items-center gap-2">
+        <span className="shrink-0 text-xs font-semibold text-gray-100">
+          {unit}
+        </span>
+        <div className="flex-1">
+          <div
+            className="h-2.5 w-full rounded-full"
+            style={{ background: gradient }}
+          />
+          <div className="mt-1 flex justify-between text-[9px] tabular-nums text-gray-400">
+            {bounds.map((b) => (
+              <span key={b}>{b}</span>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function WeatherLegend({ mode }: { mode: LayerKey }) {
-  if (mode === "weather") {
+  if (mode === "temperature") return <GradientBar unit="°C" stops={TEMP_STOPS} />;
+  if (mode === "wind") return <GradientBar unit="m/s" stops={WIND_STOPS} />;
+  if (mode === "humidity") return <GradientBar unit="%" stops={HUMIDITY_STOPS} />;
+  if (mode === "precipitation")
+    return <GradientBar unit="mm" stops={PRECIP_STOPS} />;
+
+  if (mode === "radar") {
     return (
-      <div className="pointer-events-auto rounded-lg bg-panel p-3 shadow-lg backdrop-blur">
-        <div className="mb-2 text-xs font-semibold text-gray-100">
-          天氣（各縣市代表）
-        </div>
-        <div className="grid grid-cols-2 gap-x-3 gap-y-1">
-          {WEATHER_LEGEND.map((it) => (
-            <div key={it.label} className="flex items-center gap-2">
-              <span className="text-sm">{it.icon}</span>
-              <span className="text-xs text-gray-300">{it.label}</span>
+      <div className="pointer-events-auto w-60 rounded-lg bg-panel p-2.5 shadow-lg backdrop-blur">
+        <div className="flex items-center gap-2">
+          <span className="shrink-0 text-xs font-semibold text-gray-100">
+            雷達
+          </span>
+          <div className="flex-1">
+            <div className="h-2.5 w-full rounded-full bg-gradient-to-r from-sky-400 via-lime-400 via-yellow-400 to-red-500" />
+            <div className="mt-1 flex justify-between text-[9px] text-gray-400">
+              <span>弱</span>
+              <span>回波強度</span>
+              <span>強</span>
             </div>
-          ))}
-        </div>
-        <div className="mt-2 border-t border-white/10 pt-2 text-[10px] text-gray-400">
-          取各縣市多數測站的天氣現象
+          </div>
         </div>
       </div>
     );
   }
 
-  let title = "";
-  let stops: { color: string; label: string }[] = [];
-
-  if (mode === "temperature") {
-    title = "氣溫 (°C)";
-    stops = TEMP_STOPS;
-  } else if (mode === "wind") {
-    title = "風速 (m/s)";
-    stops = WIND_STOPS;
-  } else if (mode === "humidity") {
-    title = "相對濕度 (%)";
-    stops = HUMIDITY_STOPS;
-  } else if (mode === "precipitation") {
-    title = "雨量 (mm)";
-    stops = PRECIP_STOPS;
-  } else {
-    return null;
+  if (mode === "weather") {
+    return (
+      <div className="pointer-events-auto rounded-lg bg-panel p-2.5 shadow-lg backdrop-blur">
+        <div className="grid grid-cols-3 gap-x-3 gap-y-1">
+          {WEATHER_LEGEND.map((it) => (
+            <div key={it.label} className="flex items-center gap-1.5">
+              <span className="text-sm">{it.icon}</span>
+              <span className="text-xs text-gray-300">{it.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
   }
 
-  return (
-    <div className="pointer-events-auto rounded-lg bg-panel p-3 shadow-lg backdrop-blur">
-      <div className="mb-2 text-xs font-semibold text-gray-100">{title}</div>
-      <div className="grid grid-cols-1 gap-1">
-        {stops.map((s) => (
-          <StopRow key={s.label} color={s.color} label={s.label} />
-        ))}
-      </div>
-      {mode === "precipitation" && (
-        <div className="mt-2 border-t border-white/10 pt-2 text-[10px] text-gray-400">
-          填色為內插後的雨量分布
-        </div>
-      )}
-      {mode === "wind" && (
-        <div className="mt-2 border-t border-white/10 pt-2 text-[10px] text-gray-400">
-          箭頭指向風的<span className="text-gray-200">去向</span>，顏色代表風速
-        </div>
-      )}
-    </div>
-  );
+  return null;
 }

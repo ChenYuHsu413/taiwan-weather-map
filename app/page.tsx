@@ -7,6 +7,7 @@ import WeatherLayerControl from "@/components/WeatherLayerControl";
 import WeatherSummaryPanel from "@/components/WeatherSummaryPanel";
 import WeatherLegend from "@/components/WeatherLegend";
 import WarningBanner from "@/components/WarningBanner";
+import MobileControls from "@/components/MobileControls";
 
 // Leaflet 依賴 window，需關閉 SSR。
 const WeatherMap = dynamic(() => import("@/components/WeatherMap"), {
@@ -32,7 +33,10 @@ export default function Home() {
   const [basemap, setBasemap] = useState<"dark" | "osm">("dark");
   const [showCounties, setShowCounties] = useState(true);
   const [showWindStations, setShowWindStations] = useState(false);
-  const [showRadar, setShowRadar] = useState(false);
+  const [showTempLabels, setShowTempLabels] = useState(true);
+
+  // 雷達回波是獨立圖層（與氣溫/雨量互斥），選到它才啟用雷達動畫。
+  const showRadar = mode === "radar";
 
   // 雷達動畫
   const [radarData, setRadarData] = useState<{
@@ -135,6 +139,7 @@ export default function Home() {
             basemap={basemap}
             showCounties={showCounties}
             showWindStations={showWindStations}
+            showTempLabels={showTempLabels}
             radar={
               showRadar && radarData
                 ? {
@@ -180,15 +185,15 @@ export default function Home() {
         <WarningBanner />
       </div>
 
-      {/* 左上：摘要面板 */}
+      {/* 左上：摘要面板（桌機） */}
       {meta && (
-        <div className="absolute left-4 top-4 z-[900] flex flex-col gap-3">
+        <div className="absolute left-4 top-4 z-[900] hidden flex-col gap-3 md:flex">
           <WeatherSummaryPanel meta={meta} />
         </div>
       )}
 
-      {/* 右上：圖層控制 */}
-      <div className="absolute right-4 top-4 z-[900] flex flex-col items-end gap-3">
+      {/* 右上：圖層控制（桌機） */}
+      <div className="absolute right-4 top-4 z-[900] hidden flex-col items-end gap-3 md:flex">
         <WeatherLayerControl
           mode={mode}
           onModeChange={setMode}
@@ -198,8 +203,8 @@ export default function Home() {
           onToggleCounties={setShowCounties}
           showWindStations={showWindStations}
           onToggleWindStations={setShowWindStations}
-          showRadar={showRadar}
-          onToggleRadar={setShowRadar}
+          showTempLabels={showTempLabels}
+          onToggleTempLabels={setShowTempLabels}
           onLocate={handleLocate}
           locating={locating}
         />
@@ -210,14 +215,14 @@ export default function Home() {
         )}
       </div>
 
-      {/* 右下：圖例 */}
-      <div className="absolute bottom-4 right-4 z-[900]">
+      {/* 右下：圖例（桌機） */}
+      <div className="absolute bottom-4 right-4 z-[900] hidden md:block">
         <WeatherLegend mode={mode} />
       </div>
 
-      {/* 底部中央：雷達動畫播放控制 */}
+      {/* 底部中央：雷達動畫播放控制（手機上移，避開底部控制列） */}
       {showRadar && radarData && (
-        <div className="absolute bottom-20 left-1/2 z-[900] flex w-[min(92vw,420px)] -translate-x-1/2 items-center gap-3 rounded-lg bg-panel px-4 py-2.5 shadow-lg backdrop-blur">
+        <div className="absolute bottom-[132px] left-1/2 z-[900] flex w-[min(92vw,420px)] -translate-x-1/2 items-center gap-3 rounded-lg bg-panel px-4 py-2.5 shadow-lg backdrop-blur md:bottom-20">
           <button
             onClick={() => setRadarPlaying((p) => !p)}
             className="shrink-0 rounded-md bg-white/10 px-2.5 py-1 text-sm text-gray-100 hover:bg-white/20"
@@ -246,9 +251,9 @@ export default function Home() {
         </div>
       )}
 
-      {/* 左下：資料更新時間（明顯標示） */}
+      {/* 左下：資料更新時間（桌機） */}
       {meta && (
-        <div className="absolute bottom-4 left-4 z-[900] rounded-lg bg-panel px-4 py-2 text-xs text-gray-300 shadow-lg backdrop-blur">
+        <div className="absolute bottom-4 left-4 z-[900] hidden rounded-lg bg-panel px-4 py-2 text-xs text-gray-300 shadow-lg backdrop-blur md:block">
           更新於{" "}
           <span className="font-semibold text-gray-100">
             {new Date(meta.updatedAt).toLocaleString("zh-TW", {
@@ -262,6 +267,28 @@ export default function Home() {
             ↻ 重新整理
           </button>
         </div>
+      )}
+
+      {/* 手機版控制層（md 以下） */}
+      {meta && (
+        <MobileControls
+          meta={meta}
+          mode={mode}
+          onModeChange={setMode}
+          basemap={basemap}
+          onBasemapChange={setBasemap}
+          showCounties={showCounties}
+          onToggleCounties={setShowCounties}
+          showWindStations={showWindStations}
+          onToggleWindStations={setShowWindStations}
+          showTempLabels={showTempLabels}
+          onToggleTempLabels={setShowTempLabels}
+          onLocate={handleLocate}
+          locating={locating}
+          locateMsg={locateMsg}
+          userLocation={userLocation}
+          onRefresh={loadWeather}
+        />
       )}
     </main>
   );

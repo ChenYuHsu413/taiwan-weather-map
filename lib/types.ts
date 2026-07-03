@@ -73,6 +73,7 @@ export interface WeatherApiResponse {
 export type LayerKey =
   | "temperature"
   | "precipitation"
+  | "radar"
   | "wind"
   | "humidity"
   | "weather"

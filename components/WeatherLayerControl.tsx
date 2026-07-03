@@ -2,9 +2,10 @@
 
 import type { LayerKey } from "@/lib/types";
 
-const MODES: { key: LayerKey; label: string; icon: string }[] = [
+export const MODES: { key: LayerKey; label: string; icon: string }[] = [
   { key: "temperature", label: "氣溫", icon: "🌡️" },
   { key: "precipitation", label: "雨量", icon: "🌧️" },
+  { key: "radar", label: "雷達", icon: "🛰️" },
   { key: "wind", label: "風速風向", icon: "💨" },
   { key: "humidity", label: "濕度", icon: "💧" },
   { key: "weather", label: "天氣", icon: "⛅" },
@@ -20,8 +21,8 @@ interface Props {
   onToggleCounties: (v: boolean) => void;
   showWindStations: boolean;
   onToggleWindStations: (v: boolean) => void;
-  showRadar: boolean;
-  onToggleRadar: (v: boolean) => void;
+  showTempLabels: boolean;
+  onToggleTempLabels: (v: boolean) => void;
   onLocate: () => void;
   locating: boolean;
 }
@@ -35,8 +36,8 @@ export default function WeatherLayerControl({
   onToggleCounties,
   showWindStations,
   onToggleWindStations,
-  showRadar,
-  onToggleRadar,
+  showTempLabels,
+  onToggleTempLabels,
   onLocate,
   locating,
 }: Props) {
@@ -84,15 +85,17 @@ export default function WeatherLayerControl({
         </label>
       )}
 
-      <label className="mt-2 flex cursor-pointer items-center gap-2 rounded-md bg-white/5 px-3 py-2 text-sm text-gray-200 hover:bg-white/10">
-        <input
-          type="checkbox"
-          checked={showRadar}
-          onChange={(e) => onToggleRadar(e.target.checked)}
-          className="accent-sky-500"
-        />
-        🛰️ 雷達回波
-      </label>
+      {mode === "temperature" && (
+        <label className="mt-2 flex cursor-pointer items-center gap-2 rounded-md bg-white/5 px-3 py-2 text-sm text-gray-200 hover:bg-white/10">
+          <input
+            type="checkbox"
+            checked={showTempLabels}
+            onChange={(e) => onToggleTempLabels(e.target.checked)}
+            className="accent-sky-500"
+          />
+          氣溫數字標籤
+        </label>
+      )}
 
       <div className="mt-3 border-t border-white/10 pt-3">
         <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-400">
