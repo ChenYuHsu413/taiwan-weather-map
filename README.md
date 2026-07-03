@@ -29,7 +29,7 @@ Next.js 14 (App Router) · TypeScript · Tailwind CSS · Leaflet / React Leaflet
 - **即時測站資料**：使用中央氣象署 CWA 開放資料 API（`O-A0003-001` 優先，`O-A0001-001` fallback），後端統一清洗成 GeoJSON，並以 10 分鐘快取降低外部 API 壓力。
 - **平滑氣溫/雨量場**：前端在 [InterpolatedField.tsx](components/InterpolatedField.tsx) 用逐像素 IDW（Inverse Distance Weighting）把離散測站值內插成連續點陣，再用縣市/陸地 polygon 裁切，以 `ImageOverlay` 疊到地圖上，做出接近 Windy 的平滑漸層效果。
 - **粒子風場動畫**：使用 NOAA GFS 0.25° 的 10m `UGRD` / `VGRD` 風場格點，先由 [scripts/fetch-gfs-wind.mjs](scripts/fetch-gfs-wind.mjs) 透過 NOMADS 下載台灣周邊 bbox 並轉成 [gfs-wind.json](public/data/gfs-wind.json)，前端再由 [WindParticleLayer.tsx](components/WindParticleLayer.tsx) 做雙線性內插並以 Canvas 粒子流線呈現。若格點資料載入失敗，才退回 CWA 測站風速/風向 IDW 作為備援。
-- **展示範圍調校**：風場圖層刻意限制縮放與拖曳範圍，並降低粒子移動速度與亮度，避免使用者拖到格點邊界或在低 zoom 時看到過度誇張的海面風速視覺。
+- **展示範圍調校**：風場圖層刻意限制縮放與拖曳範圍；粒子改用全程冷色系（藍→淡青，不含暖色端）並對高速流做軟上限壓縮，避免海上強風出現又快又暖、過度誇張的視覺，也避免使用者拖到格點邊界。
 - **投影對齊**：填色點陣繪製時使用 Web Mercator / 反 Mercator 換算，和 Leaflet 的投影一致，避免海岸線附近出現系統性偏移。
 - **雷達動畫**：地圖上的雷達動畫使用 RainViewer 免費 XYZ 圖磚。RainViewer 和底圖同為 Web Mercator，因此比 CWA 靜態 PNG `imageOverlay` 更容易精準對齊；播放控制則透過預載多個 `TileLayer`，切換 opacity 形成回放動畫。
 - **天氣特報爬蟲**：後端爬取 NCDR 民生示警平台的公開 CAP Atom feed（免授權碼），自行解析出中央氣象署的天氣特報、寫入資料庫，前端再以頂部橫幅顯示目前生效中的特報。詳見下方「資料來源與爬蟲」。
@@ -86,11 +86,12 @@ lib/
   color-scale.ts       氣溫/風速/濕度/雨量色階
   types.ts             TypeScript 型別
 components/
-  WeatherMap.tsx           Leaflet 地圖（底圖切換、markers、風向箭頭、縣市界線、定位、雷達疊圖）
+  WeatherMap.tsx           Leaflet 地圖（底圖切換、markers、風向箭頭、縣市界線、定位、雷達圖層）
   InterpolatedField.tsx    逐像素 IDW 內插填色場（氣溫/雨量，類 Windy 平滑漸層，裁切到陸地）
   WindParticleLayer.tsx    測站風速/風向 IDW 內插後的 Canvas 粒子風場動畫
   WarningBanner.tsx        天氣特報橫幅（NCDR CAP 爬蟲成果，頂部顯示）
-  WeatherLayerControl.tsx  圖層切換 + 雷達/縣市開關 + 定位按鈕
+  WeatherLayerControl.tsx  桌機圖層切換（含雷達）+ 縣市界線/氣溫標籤開關 + 底圖 + 定位按鈕
+  MobileControls.tsx       手機版控制層（底部圖層列 + 摘要/圖例/設定 bottom sheet）
   WeatherSummaryPanel.tsx  左上摘要面板
   WeatherStationPopup.tsx  測站 popup 內容
   WeatherLegend.tsx        圖例
@@ -137,7 +138,7 @@ public/data/taiwan-counties.geojson  縣市界線（見下方來源）
 - [x] Postgres 時序儲存：每次抓取 append 逐站觀測 → 累積歷史（`/api/weather/history`）
 - [x] Leaflet 地圖含台灣本島與離島初始視角
 - [x] 測站 marker + 點擊 popup（完整欄位，深色主題）
-- [x] 氣溫：逐像素 IDW 平滑填色場（填滿本島、山區內插補值）+ 分級數字標籤（縮太小時自動隱藏、放大看各站、中間看縣市均溫）
+- [x] 氣溫：逐像素 IDW 平滑填色場（填滿本島、山區內插補值）+ 分級數字標籤（縮太小時自動隱藏、放大看各站、中間看縣市均溫；另有「氣溫數字標籤」開關可手動隱藏，只留填色場）
 - [x] 雨量：逐像素 IDW 平滑填色（類 Windy，只填有雨陸地）+ 色帶圖例（不顯示測站點）
 - [x] 風向箭頭（依 windDirection 旋轉、依 windSpeed 上色）
 - [x] 粒子風場動畫：優先使用 NOAA GFS 10m u/v 格點風場，前端雙線性內插後以 Canvas 粒子流線呈現類 Windy 的風場視覺；若格點資料失敗才退回 CWA 測站 IDW 近似
@@ -145,18 +146,18 @@ public/data/taiwan-counties.geojson  縣市界線（見下方來源）
 - [x] 天氣（陰晴）示意圖層：每縣市取多數測站的天氣現象，以 emoji 徽章（☀️/⛅/☁️/🌧️/⛈️/🌫️）標在縣市代表位置
 - [x] 底圖切換：深色 ↔ OpenStreetMap 街道圖
 - [x] 縣市界線 + hover 高亮 + 點擊 zoom
-- [x] 雷達回波動畫（RainViewer 圖磚，過去約 2 小時每 10 分一格；預設暫停於最新影格，可播放/暫停/拖曳時間軸；原生只取到 z7 再放大，避免外海「Zoom Level Not Supported」破圖）
+- [x] 雷達回波：獨立圖層選項（與氣溫/雨量互斥，選它才播放動畫），RainViewer 圖磚，過去約 2 小時每 10 分一格；預設暫停於最新影格，可播放/暫停/拖曳時間軸；原生只取到 z7 再放大，避免外海「Zoom Level Not Supported」破圖
 - [x] 天氣特報爬蟲 + Postgres：爬 NCDR CAP feed → 解析中央氣象署特報 → 寫入 `weather_warnings` 表 → 頂部橫幅顯示目前生效中的特報（`/api/warnings`）
 - [x] 使用者定位（Geolocation）+ turf 判斷所在縣市並高亮
 - [x] 摘要面板（最高/最低溫、最大雨量、最大風速、測站數、更新時間、資料來源、本次讀取來源：即時 API / 資料庫 / 舊資料）
 - [x] loading / API 錯誤 / 定位失敗的友善提示
 - [x] 深色 dashboard 風格、響應式
+- [x] 手機版介面重排：地圖優先，底部橫向圖層切換列 + 摘要/圖例/設定 bottom sheet（桌機維持四角浮動面板）
 
 ## 尚未完成 / 後續可擴充
 
 - [ ] 颱風路徑（架構已模組化，新增 `lib/` client + API route 即可）
 - [ ] 進一步自動化格點風場更新排程，讓 NOAA GFS 風場資料可定期重新產生
-- [ ] 手機版面板收合最佳化（目前可用，但小螢幕面板較擠）
 - [ ] 測站搜尋 / 篩選
 - [ ] 單元測試（transform 邏輯已用臨時腳本驗證通過，尚未納入正式 test suite）
 
