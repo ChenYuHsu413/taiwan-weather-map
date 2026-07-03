@@ -42,10 +42,19 @@ interface Particle {
   maxAge: number;
 }
 
-const PARTICLE_COUNT = 1900;
+// 固定「密度」而非固定「數量」：粒子數依畫布面積計算，避免小螢幕（手機）
+// 因同樣的粒子數擠在較小畫布而顯得過密、像暴風。以桌機觀感為基準校準。
+const AREA_PER_PARTICLE = 580; // 每顆粒子分攤的畫布面積（px²）
+const MIN_PARTICLES = 400;
+const MAX_PARTICLES = 2400;
 const MAX_AGE_MIN = 85;
 const MAX_AGE_SPAN = 90;
 const PX_PER_MS = 0.6;
+
+function particleCount(width: number, height: number): number {
+  const n = Math.round((width * height) / AREA_PER_PARTICLE);
+  return Math.max(MIN_PARTICLES, Math.min(MAX_PARTICLES, n));
+}
 
 function stationToVector(f: WeatherFeature): WindVector | null {
   const speed = f.properties.windSpeed;
@@ -140,12 +149,25 @@ function interpolateGridWind(
   return { u, v, speed: Math.hypot(u, v) };
 }
 
+// 全程冷色系（藍→淡青→米白），避免強風出現黃/橘的「警報感」。
+// 海上風速偏高，暖色會讓海面看起來像暴風，故拿掉暖色端。
 function particleColor(speed: number): string {
-  if (speed < 4) return "rgba(99, 168, 238, 0.7)";
-  if (speed < 8) return "rgba(139, 207, 232, 0.78)";
-  if (speed < 12) return "rgba(186, 225, 219, 0.84)";
-  if (speed < 16) return "rgba(237, 218, 142, 0.86)";
-  return "rgba(245, 178, 118, 0.88)";
+  if (speed < 4) return "rgba(120, 174, 226, 0.55)";
+  if (speed < 8) return "rgba(150, 200, 224, 0.6)";
+  if (speed < 12) return "rgba(180, 214, 220, 0.62)";
+  if (speed < 16) return "rgba(198, 220, 214, 0.64)";
+  return "rgba(210, 224, 208, 0.66)";
+}
+
+// 每幀位移的軟上限（px）：超過門檻的部分以開根號壓縮，讓海上強風不再拉出
+// 誇張的高速長條，但仍保留方向與相對快慢。陸地低速風幾乎不受影響。
+const DISP_SOFT = 2.5;
+
+function softCompress(dx: number, dy: number): [number, number] {
+  const disp = Math.hypot(dx, dy);
+  if (disp <= DISP_SOFT) return [dx, dy];
+  const k = (DISP_SOFT + Math.sqrt(disp - DISP_SOFT)) / disp;
+  return [dx * k, dy * k];
 }
 
 function resizeCanvas(map: L.Map, canvas: HTMLCanvasElement) {
@@ -206,7 +228,8 @@ export default function WindParticleLayer({
     resizeCanvas(map, canvas);
 
     const resetParticles = () => {
-      particlesRef.current = Array.from({ length: PARTICLE_COUNT }, () =>
+      const count = particleCount(canvas.width, canvas.height);
+      particlesRef.current = Array.from({ length: count }, () =>
         randomParticle(canvas.width, canvas.height)
       );
     };
@@ -231,7 +254,7 @@ export default function WindParticleLayer({
       ctx.fillStyle = "rgba(0, 0, 0, 0.86)";
       ctx.fillRect(0, 0, width, height);
       ctx.globalCompositeOperation = "source-over";
-      ctx.lineWidth = 1.75;
+      ctx.lineWidth = 1.5;
       ctx.lineCap = "round";
 
       const particles = particlesRef.current;
@@ -259,12 +282,16 @@ export default function WindParticleLayer({
 
         const x0 = p.x;
         const y0 = p.y;
-        p.x += wind.u * PX_PER_MS * zoomScale;
-        p.y -= wind.v * PX_PER_MS * zoomScale;
+        const [dx, dy] = softCompress(
+          wind.u * PX_PER_MS * zoomScale,
+          -wind.v * PX_PER_MS * zoomScale
+        );
+        p.x += dx;
+        p.y += dy;
         p.age += 1;
 
         ctx.strokeStyle = particleColor(wind.speed);
-        ctx.globalAlpha = Math.max(0.3, Math.min(0.72, wind.speed / 18));
+        ctx.globalAlpha = Math.max(0.22, Math.min(0.5, wind.speed / 24));
         ctx.beginPath();
         ctx.moveTo(x0, y0);
         ctx.lineTo(p.x, p.y);
