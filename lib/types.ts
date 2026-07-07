@@ -74,8 +74,44 @@ export type LayerKey =
   | "temperature"
   | "precipitation"
   | "radar"
+  | "typhoon"
   | "wind"
   | "humidity"
   | "weather"
   | "stations"
   | "counties";
+
+// ---- 颱風路徑（CWA W-C0034-005）----
+
+/** 單一颱風定位點（分析或預報）。缺值一律為 null。 */
+export interface TyphoonFix {
+  time: string | null; // ISO8601
+  tau: number | null; // 預報時距（小時）；分析點為 null
+  lng: number;
+  lat: number;
+  pressure: number | null; // hPa
+  maxWind: number | null; // 近中心最大風速 m/s
+  gust: number | null; // 最大陣風 m/s
+  radius70: number | null; // 70% 機率半徑（預報誤差圈）km
+  stormRadius: number | null; // 七級風（暴風）半徑 km
+}
+
+export interface Typhoon {
+  id: string;
+  name: string; // 中文名（無則英文或編號）
+  enName: string | null;
+  category: string | null; // 強度分級（由近中心最大風速推得）
+  past: TyphoonFix[]; // 分析路徑，時間舊到新（含目前位置為最後一點）
+  current: TyphoonFix | null; // 目前中心（分析最後一點）
+  forecast: TyphoonFix[]; // 預報路徑，依 tau 升冪
+}
+
+export interface TyphoonApiResponse {
+  success: boolean;
+  count: number;
+  typhoons: Typhoon[];
+  fetchedAt: string;
+  cached: boolean;
+  stale: boolean;
+  error?: string;
+}

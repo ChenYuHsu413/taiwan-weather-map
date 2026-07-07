@@ -74,6 +74,36 @@ export default function WeatherLegend({ mode }: { mode: LayerKey }) {
     );
   }
 
+  if (mode === "typhoon") {
+    return (
+      <div className="pointer-events-auto w-60 rounded-lg bg-panel p-2.5 text-xs text-gray-300 shadow-lg backdrop-blur">
+        <div className="mb-1.5 font-semibold text-gray-100">颱風路徑</div>
+        <div className="flex items-center gap-2">
+          <span className="h-0.5 w-6 shrink-0 bg-slate-300" />
+          <span>過去路徑</span>
+        </div>
+        <div className="mt-1 flex items-center gap-2">
+          <span
+            className="h-0.5 w-6 shrink-0"
+            style={{
+              backgroundImage:
+                "repeating-linear-gradient(to right, #f43f5e 0 6px, transparent 6px 13px)",
+            }}
+          />
+          <span>官方預報路徑</span>
+        </div>
+        <div className="mt-1 flex items-center gap-2">
+          <span className="h-3 w-3 shrink-0 rounded-full border border-rose-400 bg-rose-500/20" />
+          <span>70% 機率圈</span>
+        </div>
+        <div className="mt-1 flex items-center gap-2">
+          <span className="h-3 w-3 shrink-0 rounded-full border border-amber-400 bg-amber-400/20" />
+          <span>暴風半徑（七級風）</span>
+        </div>
+      </div>
+    );
+  }
+
   if (mode === "weather") {
     return (
       <div className="pointer-events-auto rounded-lg bg-panel p-2.5 shadow-lg backdrop-blur">

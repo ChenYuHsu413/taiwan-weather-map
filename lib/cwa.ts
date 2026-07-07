@@ -68,14 +68,21 @@ function getApiKey(): string {
 }
 
 /**
- * 向 CWA 抓取指定資料集的原始 JSON。
- * @throws CwaError 當 HTTP 失敗、timeout 或回應標示失敗時。
+ * 向 CWA 抓取指定資料集的原始 JSON（不做資料結構檢查）。
+ * 供結構各異的資料集共用（測站、颱風路徑…），由呼叫端自行驗證內容。
+ * @throws CwaError 當 HTTP 失敗、timeout 或回應標示 success=false 時。
  */
-export async function fetchDataset(dataset: string): Promise<CwaRawResponse> {
+export async function fetchRawDataset<T = unknown>(
+  dataset: string,
+  params: Record<string, string> = {}
+): Promise<T> {
   const apiKey = getApiKey();
-  const url = `${CWA_BASE}/${dataset}?Authorization=${encodeURIComponent(
-    apiKey
-  )}&format=JSON`;
+  const qs = new URLSearchParams({
+    Authorization: apiKey,
+    format: "JSON",
+    ...params,
+  });
+  const url = `${CWA_BASE}/${dataset}?${qs.toString()}`;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
@@ -94,12 +101,9 @@ export async function fetchDataset(dataset: string): Promise<CwaRawResponse> {
       );
     }
 
-    const json = (await res.json()) as CwaRawResponse;
+    const json = (await res.json()) as { success?: string | boolean } & T;
     if (json.success === "false" || json.success === false) {
       throw new CwaError("CWA API 回應 success=false（授權碼或參數可能錯誤）", dataset);
-    }
-    if (!json.records?.Station || json.records.Station.length === 0) {
-      throw new CwaError("CWA API 回應無測站資料", dataset);
     }
     return json;
   } catch (err) {
@@ -114,4 +118,16 @@ export async function fetchDataset(dataset: string): Promise<CwaRawResponse> {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/**
+ * 向 CWA 抓取指定測站資料集的原始 JSON。
+ * @throws CwaError 當 HTTP 失敗、timeout、success=false 或無測站資料時。
+ */
+export async function fetchDataset(dataset: string): Promise<CwaRawResponse> {
+  const json = await fetchRawDataset<CwaRawResponse>(dataset);
+  if (!json.records?.Station || json.records.Station.length === 0) {
+    throw new CwaError("CWA API 回應無測站資料", dataset);
+  }
+  return json;
 }

@@ -2,12 +2,18 @@
 
 import { useCallback, useEffect, useState } from "react";
 import dynamic from "next/dynamic";
-import type { LayerKey, WeatherApiResponse } from "@/lib/types";
+import type {
+  LayerKey,
+  Typhoon,
+  TyphoonApiResponse,
+  WeatherApiResponse,
+} from "@/lib/types";
 import WeatherLayerControl from "@/components/WeatherLayerControl";
 import WeatherSummaryPanel from "@/components/WeatherSummaryPanel";
 import WeatherLegend from "@/components/WeatherLegend";
 import WarningBanner from "@/components/WarningBanner";
 import MobileControls from "@/components/MobileControls";
+import RadarControl from "@/components/RadarControl";
 
 // Leaflet 依賴 window，需關閉 SSR。
 const WeatherMap = dynamic(() => import("@/components/WeatherMap"), {
@@ -37,6 +43,11 @@ export default function Home() {
 
   // 雷達回波是獨立圖層（與氣溫/雨量互斥），選到它才啟用雷達動畫。
   const showRadar = mode === "radar";
+  // 颱風路徑同樣是獨立圖層。
+  const showTyphoon = mode === "typhoon";
+
+  const [typhoons, setTyphoons] = useState<Typhoon[] | null>(null);
+  const [typhoonLoaded, setTyphoonLoaded] = useState(false);
 
   // 雷達動畫
   const [radarData, setRadarData] = useState<{
@@ -70,6 +81,28 @@ export default function Home() {
   useEffect(() => {
     loadWeather();
   }, [loadWeather]);
+
+  // 開啟颱風圖層時抓取官方分析與預報路徑。
+  useEffect(() => {
+    if (!showTyphoon) return;
+    let cancelled = false;
+    setTyphoonLoaded(false);
+    fetch("/api/typhoon", { cache: "no-store" })
+      .then((r) => r.json() as Promise<TyphoonApiResponse>)
+      .then((j) => {
+        if (cancelled) return;
+        setTyphoons(j.success ? j.typhoons : []);
+        setTyphoonLoaded(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setTyphoons([]);
+        setTyphoonLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [showTyphoon]);
 
   // 開啟雷達時抓取影格清單（過去約 2 小時、每 10 分鐘一張）。
   useEffect(() => {
@@ -149,6 +182,7 @@ export default function Home() {
                   }
                 : null
             }
+            typhoons={showTyphoon ? typhoons : null}
             userLocation={userLocation}
           />
         )}
@@ -220,35 +254,44 @@ export default function Home() {
         <WeatherLegend mode={mode} />
       </div>
 
+      {/* 颱風圖層資訊：無颱風時提示，有颱風時列出名稱與強度 */}
+      {showTyphoon && typhoonLoaded && (
+        <div className="pointer-events-none absolute bottom-[132px] left-1/2 z-[900] flex w-[min(92vw,460px)] -translate-x-1/2 justify-center md:bottom-8">
+          {typhoons && typhoons.length > 0 ? (
+            <div className="pointer-events-auto flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-panel px-4 py-2.5 text-sm shadow-lg backdrop-blur">
+              <span className="text-base">🌀</span>
+              {typhoons.map((t) => (
+                <span key={t.id} className="text-gray-100">
+                  <span className="font-semibold">{t.name}</span>
+                  {t.category && (
+                    <span className="ml-1 text-amber-300">{t.category}</span>
+                  )}
+                </span>
+              ))}
+              <span className="text-[11px] text-gray-400">
+                含官方預報路徑與 70% 機率圈
+              </span>
+            </div>
+          ) : (
+            <div className="pointer-events-auto rounded-lg bg-panel px-4 py-2.5 text-sm text-gray-300 shadow-lg backdrop-blur">
+              🌀 目前中央氣象署無正在追蹤的颱風
+            </div>
+          )}
+        </div>
+      )}
+
       {/* 底部中央：雷達動畫播放控制（手機上移，避開底部控制列） */}
       {showRadar && radarData && (
-        <div className="absolute bottom-[132px] left-1/2 z-[900] flex w-[min(92vw,420px)] -translate-x-1/2 items-center gap-3 rounded-lg bg-panel px-4 py-2.5 shadow-lg backdrop-blur md:bottom-20">
-          <button
-            onClick={() => setRadarPlaying((p) => !p)}
-            className="shrink-0 rounded-md bg-white/10 px-2.5 py-1 text-sm text-gray-100 hover:bg-white/20"
-            aria-label={radarPlaying ? "暫停" : "播放"}
-          >
-            {radarPlaying ? "⏸" : "▶"}
-          </button>
-          <input
-            type="range"
-            min={0}
-            max={radarData.frames.length - 1}
-            value={radarIdx}
-            onChange={(e) => {
-              setRadarPlaying(false);
-              setRadarIdx(Number(e.target.value));
-            }}
-            className="h-1 flex-1 cursor-pointer accent-sky-400"
-          />
-          <span className="shrink-0 font-mono text-xs tabular-nums text-gray-100">
-            {new Date(radarData.frames[radarIdx].time * 1000).toLocaleTimeString(
-              "zh-TW",
-              { hour: "2-digit", minute: "2-digit", hour12: false }
-            )}
-          </span>
-          <span className="shrink-0 text-[10px] text-gray-400">雷達</span>
-        </div>
+        <RadarControl
+          frames={radarData.frames}
+          idx={radarIdx}
+          playing={radarPlaying}
+          onTogglePlay={() => setRadarPlaying((p) => !p)}
+          onSeek={(i) => {
+            setRadarPlaying(false);
+            setRadarIdx(i);
+          }}
+        />
       )}
 
       {/* 左下：資料更新時間（桌機） */}

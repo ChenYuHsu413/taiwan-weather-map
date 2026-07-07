@@ -6,6 +6,7 @@ export const MODES: { key: LayerKey; label: string; icon: string }[] = [
   { key: "temperature", label: "氣溫", icon: "🌡️" },
   { key: "precipitation", label: "雨量", icon: "🌧️" },
   { key: "radar", label: "雷達", icon: "🛰️" },
+  { key: "typhoon", label: "颱風", icon: "🌀" },
   { key: "wind", label: "風速風向", icon: "💨" },
   { key: "humidity", label: "濕度", icon: "💧" },
   { key: "weather", label: "天氣", icon: "⛅" },

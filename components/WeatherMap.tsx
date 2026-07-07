@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   MapContainer,
   TileLayer,
   CircleMarker,
+  Circle,
   Marker,
+  Polyline,
   Popup,
   GeoJSON,
   useMap,
@@ -19,6 +21,8 @@ import type {
   WeatherFeatureCollection,
   WeatherFeature,
   LayerKey,
+  Typhoon,
+  TyphoonFix,
 } from "@/lib/types";
 import {
   temperatureColor,
@@ -51,6 +55,7 @@ interface Props {
   showWindStations: boolean;
   showTempLabels: boolean;
   radar: { host: string; frames: RadarFrame[]; idx: number } | null;
+  typhoons: Typhoon[] | null;
   userLocation: UserLoc | null;
   onCountyDetected?: (county: string | null) => void;
 }
@@ -107,6 +112,231 @@ function RadarFrames({
   );
 }
 
+// 颱風符號 divIcon（旋轉），中心點用。
+const typhoonCenterIcon = L.divIcon({
+  className: "typhoon-icon",
+  html: `<div class="typhoon-eye">🌀</div>`,
+  iconSize: [34, 34],
+  iconAnchor: [17, 17],
+});
+
+/** 預報點的時距標籤 icon（+24h）。 */
+function tauLabelIcon(tau: number): L.DivIcon {
+  return L.divIcon({
+    className: "typhoon-fix-icon",
+    html: `<div class="typhoon-tau">+${tau}h</div>`,
+    iconSize: [40, 18],
+    iconAnchor: [20, 9],
+  });
+}
+
+const fmtFixTime = (iso: string | null): string => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString("zh-TW", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+};
+
+/** 颱風定位點的詳情 popup 內容。 */
+function TyphoonFixPopup({
+  name,
+  fix,
+  isForecast,
+}: {
+  name: string;
+  fix: TyphoonFix;
+  isForecast: boolean;
+}) {
+  return (
+    <div className="text-sm">
+      <div className="font-bold text-white">
+        🌀 {name}
+        {isForecast && fix.tau !== null && (
+          <span className="ml-1 text-rose-300">預報 +{fix.tau}h</span>
+        )}
+      </div>
+      <div className="mt-0.5 text-[11px] text-gray-400">
+        {isForecast ? "預報基準 " : ""}
+        {fmtFixTime(fix.time)}
+      </div>
+      <dl className="mt-1 grid grid-cols-[auto,1fr] gap-x-3 gap-y-0.5 text-gray-200">
+        {fix.pressure !== null && (
+          <>
+            <dt className="text-gray-400">中心氣壓</dt>
+            <dd>{fix.pressure} hPa</dd>
+          </>
+        )}
+        {fix.maxWind !== null && (
+          <>
+            <dt className="text-gray-400">近中心風速</dt>
+            <dd>{fix.maxWind} m/s</dd>
+          </>
+        )}
+        {fix.gust !== null && (
+          <>
+            <dt className="text-gray-400">最大陣風</dt>
+            <dd>{fix.gust} m/s</dd>
+          </>
+        )}
+        {fix.radius70 !== null && (
+          <>
+            <dt className="text-gray-400">70% 機率半徑</dt>
+            <dd>{fix.radius70} km</dd>
+          </>
+        )}
+      </dl>
+    </div>
+  );
+}
+
+/**
+ * 颱風圖層：過去路徑（實線）＋官方預報路徑（虛線）＋各預報點 70% 機率圈，
+ * 中心以旋轉颱風符號標示。資料來自 CWA W-C0034-005。
+ */
+function TyphoonLayer({ typhoon }: { typhoon: Typhoon }) {
+  const { past, current, forecast, name } = typhoon;
+
+  const toLatLng = (f: TyphoonFix): L.LatLngTuple => [f.lat, f.lng];
+  const pastLine = past.map(toLatLng);
+  // 預報線從目前中心接續。
+  const forecastLine = current
+    ? [toLatLng(current), ...forecast.map(toLatLng)]
+    : forecast.map(toLatLng);
+
+  return (
+    <>
+      {/* 過去路徑（實線） */}
+      {pastLine.length > 1 && (
+        <Polyline
+          positions={pastLine}
+          pathOptions={{ color: "#cbd5e1", weight: 2, opacity: 0.8 }}
+        />
+      )}
+
+      {/* 預報路徑（虛線） */}
+      {forecastLine.length > 1 && (
+        <Polyline
+          positions={forecastLine}
+          pathOptions={{
+            color: "#f43f5e",
+            weight: 2.5,
+            opacity: 0.95,
+            dashArray: "6 7",
+          }}
+        />
+      )}
+
+      {/* 過去定位點（小圓點） */}
+      {past.slice(0, -1).map((f, i) => (
+        <CircleMarker
+          key={`past-${i}`}
+          center={toLatLng(f)}
+          radius={3}
+          pathOptions={{
+            color: "#e2e8f0",
+            weight: 1,
+            fillColor: "#94a3b8",
+            fillOpacity: 0.9,
+          }}
+        >
+          <Popup>
+            <TyphoonFixPopup name={name} fix={f} isForecast={false} />
+          </Popup>
+        </CircleMarker>
+      ))}
+
+      {/* 目前暴風半徑（七級風圈） */}
+      {current?.stormRadius && (
+        <Circle
+          center={toLatLng(current)}
+          radius={current.stormRadius * 1000}
+          pathOptions={{
+            color: "#fbbf24",
+            weight: 1,
+            opacity: 0.6,
+            fillColor: "#fbbf24",
+            fillOpacity: 0.12,
+          }}
+        />
+      )}
+
+      {/* 各預報點的 70% 機率圈 + 時距標籤 */}
+      {forecast.map((f, i) => (
+        <Fragment key={`fc-${i}`}>
+          {f.radius70 && (
+            <Circle
+              center={toLatLng(f)}
+              radius={f.radius70 * 1000}
+              pathOptions={{
+                color: "#f43f5e",
+                weight: 1,
+                opacity: 0.5,
+                dashArray: "3 5",
+                fillColor: "#f43f5e",
+                fillOpacity: 0.07,
+              }}
+            />
+          )}
+          {f.tau !== null && (
+            <Marker position={toLatLng(f)} icon={tauLabelIcon(f.tau)}>
+              <Popup>
+                <TyphoonFixPopup name={name} fix={f} isForecast />
+              </Popup>
+            </Marker>
+          )}
+        </Fragment>
+      ))}
+
+      {/* 目前中心（旋轉颱風符號） */}
+      {current && (
+        <Marker position={toLatLng(current)} icon={typhoonCenterIcon} zIndexOffset={1000}>
+          <Popup>
+            <TyphoonFixPopup name={name} fix={current} isForecast={false} />
+          </Popup>
+        </Marker>
+      )}
+    </>
+  );
+}
+
+/**
+ * 進入颱風圖層時，暫時放寬地圖可視/拖曳範圍與最小縮放，並 fitBounds 到
+ * 「台灣 + 整條颱風路徑」；離開圖層（元件卸載）時還原為台灣視野。
+ * 颱風中心常在西太平洋遠處，需比預設更廣的視野才看得到完整路徑。
+ */
+function TyphoonView({ typhoons }: { typhoons: Typhoon[] }) {
+  const map = useMap();
+  useEffect(() => {
+    // 聚焦「目前位置 + 預報路徑 + 台灣」；不含週前的遠洋舊軌跡（會使視野過廣）。
+    const pts: L.LatLngTuple[] = [];
+    for (const t of typhoons) {
+      if (t.current) pts.push([t.current.lat, t.current.lng]);
+      for (const f of t.forecast) pts.push([f.lat, f.lng]);
+    }
+    if (pts.length === 0) return;
+
+    const bounds = L.latLngBounds(pts).extend(TAIWAN_BOUNDS);
+    const prevMinZoom = map.getMinZoom();
+    map.setMinZoom(3);
+    // 移除台灣周邊的硬邊界，讓使用者可拖曳看到遠處颱風。
+    map.setMaxBounds(null as unknown as L.LatLngBounds);
+    map.fitBounds(bounds, { padding: [40, 40], animate: false });
+
+    return () => {
+      map.setMinZoom(prevMinZoom);
+      map.setMaxBounds(MAP_LIMITS);
+      map.fitBounds(TAIWAN_BOUNDS, { animate: false });
+    };
+  }, [typhoons, map]);
+  return null;
+}
+
 /** 使用者定位後平滑移動到該位置。 */
 function FlyToUser({ loc }: { loc: UserLoc | null }) {
   const map = useMap();
@@ -148,6 +378,7 @@ export default function WeatherMap({
   showWindStations,
   showTempLabels,
   radar,
+  typhoons,
   userLocation,
   onCountyDetected,
 }: Props) {
@@ -213,6 +444,9 @@ export default function WeatherMap({
         <RadarFrames host={radar.host} frames={radar.frames} idx={radar.idx} />
       )}
 
+      {typhoons && typhoons.length > 0 && <TyphoonView typhoons={typhoons} />}
+      {typhoons && typhoons.map((t) => <TyphoonLayer key={t.id} typhoon={t} />)}
+
       {/* 填色連續場（墊在最底層，非互動）*/}
       {(mode === "temperature" || mode === "precipitation") && (
         <InterpolatedField features={features} counties={counties} kind={mode} />
@@ -236,7 +470,7 @@ export default function WeatherMap({
         ) : null
       ) : mode === "weather" ? (
         <WeatherConditionLayer features={features} />
-      ) : mode === "precipitation" || mode === "radar" ? null : (
+      ) : mode === "precipitation" || mode === "radar" || mode === "typhoon" ? null : (
         features.map((f) => (
           <StationCircle key={f.properties.stationId} f={f} mode={mode} />
         ))
