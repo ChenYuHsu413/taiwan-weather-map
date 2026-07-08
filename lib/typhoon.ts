@@ -19,8 +19,11 @@ interface RawFix {
   MaxWindSpeed?: string | number;
   MaxGustSpeed?: string | number;
   Pressure?: string | number;
+  MovingDirection?: string; // 移動方位（W/WNW…）
+  MovingSpeed?: string | number; // 移動速度 km/h
   Radius70PercentProbability?: string | number;
   Circle15ms?: { Radius?: string | number }; // 七級風（暴風）半徑
+  Circle25ms?: { Radius?: string | number }; // 十級風（強烈暴風）半徑
 }
 interface RawCyclone {
   TyphoonName?: string;
@@ -69,6 +72,9 @@ function toFix(raw: RawFix, isForecast: boolean): TyphoonFix | null {
     gust: num(raw.MaxGustSpeed),
     radius70: num(raw.Radius70PercentProbability),
     stormRadius: num(raw.Circle15ms?.Radius),
+    severeRadius: num(raw.Circle25ms?.Radius),
+    moveDir: raw.MovingDirection?.trim() || null,
+    moveSpeed: num(raw.MovingSpeed),
   };
 }
 

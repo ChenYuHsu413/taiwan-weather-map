@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import type {
   LayerKey,
@@ -8,12 +8,14 @@ import type {
   TyphoonApiResponse,
   WeatherApiResponse,
 } from "@/lib/types";
+import { buildTyphoonTimeline } from "@/lib/typhoonFrames";
 import WeatherLayerControl from "@/components/WeatherLayerControl";
 import WeatherSummaryPanel from "@/components/WeatherSummaryPanel";
 import WeatherLegend from "@/components/WeatherLegend";
 import WarningBanner from "@/components/WarningBanner";
 import MobileControls from "@/components/MobileControls";
 import RadarControl from "@/components/RadarControl";
+import TyphoonTimeline from "@/components/TyphoonTimeline";
 
 // Leaflet 依賴 window，需關閉 SSR。
 const WeatherMap = dynamic(() => import("@/components/WeatherMap"), {
@@ -48,6 +50,13 @@ export default function Home() {
 
   const [typhoons, setTyphoons] = useState<Typhoon[] | null>(null);
   const [typhoonLoaded, setTyphoonLoaded] = useState(false);
+  // 颱風時間軸：目前顯示時刻（unix ms）與播放狀態。
+  const [typhoonTime, setTyphoonTime] = useState<number | null>(null);
+  const [typhoonPlaying, setTyphoonPlaying] = useState(false);
+  const typhoonTimeline = useMemo(
+    () => buildTyphoonTimeline(showTyphoon ? typhoons : null),
+    [showTyphoon, typhoons]
+  );
 
   // 雷達動畫
   const [radarData, setRadarData] = useState<{
@@ -133,6 +142,29 @@ export default function Home() {
     return () => clearInterval(timer);
   }, [showRadar, radarPlaying, radarData]);
 
+  // 時間軸資料更新時，落點回到「現在」（目前中心）並停止播放。
+  useEffect(() => {
+    setTyphoonPlaying(false);
+    setTyphoonTime(typhoonTimeline ? typhoonTimeline.tCurrent : null);
+  }, [typhoonTimeline]);
+
+  // 颱風播放：以連續時間平滑前進，整段約 14 秒跑完後循環。
+  useEffect(() => {
+    if (!typhoonPlaying || !typhoonTimeline) return;
+    const { tMin, tMax } = typhoonTimeline;
+    const span = tMax - tMin;
+    if (span <= 0) return;
+    const stepMs = 80;
+    const inc = (span * stepMs) / 14000;
+    const timer = setInterval(() => {
+      setTyphoonTime((t) => {
+        const next = (t ?? tMin) + inc;
+        return next > tMax ? tMin : next;
+      });
+    }, stepMs);
+    return () => clearInterval(timer);
+  }, [typhoonPlaying, typhoonTimeline]);
+
   const handleLocate = useCallback(() => {
     if (!("geolocation" in navigator)) {
       setLocateMsg("此瀏覽器不支援定位功能");
@@ -183,6 +215,7 @@ export default function Home() {
                 : null
             }
             typhoons={showTyphoon ? typhoons : null}
+            typhoonTime={showTyphoon ? typhoonTime : null}
             userLocation={userLocation}
           />
         )}
@@ -254,29 +287,24 @@ export default function Home() {
         <WeatherLegend mode={mode} />
       </div>
 
-      {/* 颱風圖層資訊：無颱風時提示，有颱風時列出名稱與強度 */}
-      {showTyphoon && typhoonLoaded && (
+      {/* 颱風時間軸：有颱風時顯示可播放時間軸；無颱風時提示 */}
+      {showTyphoon && typhoonTimeline && typhoonTime !== null && (
+        <TyphoonTimeline
+          timeline={typhoonTimeline}
+          time={typhoonTime}
+          playing={typhoonPlaying}
+          onTogglePlay={() => setTyphoonPlaying((p) => !p)}
+          onSeek={(t) => {
+            setTyphoonPlaying(false);
+            setTyphoonTime(t);
+          }}
+        />
+      )}
+      {showTyphoon && typhoonLoaded && !typhoonTimeline && (
         <div className="pointer-events-none absolute bottom-[132px] left-1/2 z-[900] flex w-[min(92vw,460px)] -translate-x-1/2 justify-center md:bottom-8">
-          {typhoons && typhoons.length > 0 ? (
-            <div className="pointer-events-auto flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-panel px-4 py-2.5 text-sm shadow-lg backdrop-blur">
-              <span className="text-base">🌀</span>
-              {typhoons.map((t) => (
-                <span key={t.id} className="text-gray-100">
-                  <span className="font-semibold">{t.name}</span>
-                  {t.category && (
-                    <span className="ml-1 text-amber-300">{t.category}</span>
-                  )}
-                </span>
-              ))}
-              <span className="text-[11px] text-gray-400">
-                含官方預報路徑與 70% 機率圈
-              </span>
-            </div>
-          ) : (
-            <div className="pointer-events-auto rounded-lg bg-panel px-4 py-2.5 text-sm text-gray-300 shadow-lg backdrop-blur">
-              🌀 目前中央氣象署無正在追蹤的颱風
-            </div>
-          )}
+          <div className="pointer-events-auto rounded-lg bg-panel px-4 py-2.5 text-sm text-gray-300 shadow-lg backdrop-blur">
+            🌀 目前中央氣象署無正在追蹤的颱風
+          </div>
         </div>
       )}
 

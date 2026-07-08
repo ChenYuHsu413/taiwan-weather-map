@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   MapContainer,
   TileLayer,
@@ -29,6 +29,12 @@ import {
   windColor,
   humidityColor,
 } from "@/lib/color-scale";
+import {
+  buildTyphoonTimeline,
+  sampleAt,
+  categorize,
+  type TyMoment,
+} from "@/lib/typhoonFrames";
 import WeatherStationPopup from "./WeatherStationPopup";
 import InterpolatedField from "./InterpolatedField";
 import WindParticleLayer from "./WindParticleLayer";
@@ -56,6 +62,7 @@ interface Props {
   showTempLabels: boolean;
   radar: { host: string; frames: RadarFrame[]; idx: number } | null;
   typhoons: Typhoon[] | null;
+  typhoonTime: number | null; // 時間軸目前時刻（unix ms）；null＝顯示目前中心
   userLocation: UserLoc | null;
   onCountyDetected?: (county: string | null) => void;
 }
@@ -112,21 +119,38 @@ function RadarFrames({
   );
 }
 
-// 颱風符號 divIcon（旋轉），中心點用。
-const typhoonCenterIcon = L.divIcon({
-  className: "typhoon-icon",
-  html: `<div class="typhoon-eye">🌀</div>`,
-  iconSize: [34, 34],
-  iconAnchor: [17, 17],
-});
+// 依颱風強度分級決定主色（冷→暖：熱帶低壓→輕→中→強颱）。
+function categoryColor(category: string | null): string {
+  switch (category) {
+    case "熱帶性低氣壓":
+      return "#38bdf8"; // sky
+    case "輕度颱風":
+      return "#facc15"; // yellow
+    case "中度颱風":
+      return "#fb923c"; // orange
+    case "強烈颱風":
+      return "#f43f5e"; // rose
+    default:
+      return "#f43f5e";
+  }
+}
 
-/** 預報點的時距標籤 icon（+24h）。 */
-function tauLabelIcon(tau: number): L.DivIcon {
+// 16 方位英文代碼 → 中文。
+const COMPASS: Record<string, string> = {
+  N: "北", NNE: "北北東", NE: "東北", ENE: "東北東",
+  E: "東", ESE: "東南東", SE: "東南", SSE: "南南東",
+  S: "南", SSW: "南南西", SW: "西南", WSW: "西南西",
+  W: "西", WNW: "西北西", NW: "西北", NNW: "北北西",
+};
+const dirZh = (d: string | null): string => (d ? COMPASS[d] ?? d : "");
+
+// 颱風中心符號 divIcon（旋轉），中心點用；光暈色隨強度。
+function typhoonCenterIcon(color: string): L.DivIcon {
   return L.divIcon({
-    className: "typhoon-fix-icon",
-    html: `<div class="typhoon-tau">+${tau}h</div>`,
-    iconSize: [40, 18],
-    iconAnchor: [20, 9],
+    className: "typhoon-icon",
+    html: `<div class="typhoon-eye" style="--ty-color:${color}">🌀</div>`,
+    iconSize: [34, 34],
+    iconAnchor: [17, 17],
   });
 }
 
@@ -143,6 +167,25 @@ const fmtFixTime = (iso: string | null): string => {
   });
 };
 
+/** 預報有效時刻＝預報基準時間＋時距，格式「7/10 20時」。 */
+const fmtValidTime = (fix: TyphoonFix): string => {
+  if (fix.time === null || fix.tau === null) return "";
+  const base = new Date(fix.time);
+  if (Number.isNaN(base.getTime())) return "";
+  const d = new Date(base.getTime() + fix.tau * 3600_000);
+  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}時`;
+};
+
+/** 預報點的有效時刻標籤 icon（7/10 20時）。 */
+function validTimeLabelIcon(label: string): L.DivIcon {
+  return L.divIcon({
+    className: "typhoon-fix-icon",
+    html: `<div class="typhoon-tau">${label}</div>`,
+    iconSize: [68, 18],
+    iconAnchor: [34, 9],
+  });
+}
+
 /** 颱風定位點的詳情 popup 內容。 */
 function TyphoonFixPopup({
   name,
@@ -158,7 +201,7 @@ function TyphoonFixPopup({
       <div className="font-bold text-white">
         🌀 {name}
         {isForecast && fix.tau !== null && (
-          <span className="ml-1 text-rose-300">預報 +{fix.tau}h</span>
+          <span className="ml-1 text-rose-300">預報 {fmtValidTime(fix)}</span>
         )}
       </div>
       <div className="mt-0.5 text-[11px] text-gray-400">
@@ -184,6 +227,27 @@ function TyphoonFixPopup({
             <dd>{fix.gust} m/s</dd>
           </>
         )}
+        {fix.stormRadius !== null && (
+          <>
+            <dt className="text-gray-400">七級風半徑</dt>
+            <dd>{fix.stormRadius} km</dd>
+          </>
+        )}
+        {fix.severeRadius !== null && (
+          <>
+            <dt className="text-gray-400">十級風半徑</dt>
+            <dd>{fix.severeRadius} km</dd>
+          </>
+        )}
+        {fix.moveDir && (
+          <>
+            <dt className="text-gray-400">移動</dt>
+            <dd>
+              向{dirZh(fix.moveDir)}
+              {fix.moveSpeed !== null ? ` ${fix.moveSpeed} km/h` : ""}
+            </dd>
+          </>
+        )}
         {fix.radius70 !== null && (
           <>
             <dt className="text-gray-400">70% 機率半徑</dt>
@@ -195,12 +259,119 @@ function TyphoonFixPopup({
   );
 }
 
+// 中心強度徽章 divIcon：強度分級／風速／氣壓／移動／分析時間。
+// 讓「強度」與「有沒有更新」一眼可見（用 CSS transform 浮在中心右上）。
+function typhoonBadgeIcon(t: Typhoon, color: string): L.DivIcon | null {
+  const c = t.current;
+  if (!c) return null;
+  const stat = [
+    c.maxWind !== null ? `${c.maxWind} m/s` : null,
+    c.pressure !== null ? `${c.pressure} hPa` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const move = c.moveDir
+    ? `向${dirZh(c.moveDir)}${c.moveSpeed !== null ? ` ${c.moveSpeed} km/h` : ""}`
+    : "";
+  const analysis = c.time ? `分析 ${fmtFixTime(c.time)}` : "";
+  const sub = [move, analysis].filter(Boolean).join(" · ");
+  return L.divIcon({
+    className: "typhoon-badge-icon",
+    html: `
+      <div class="typhoon-badge" style="--ty-color:${color}">
+        <div class="typhoon-badge-title">${t.category ?? "熱帶氣旋"} ${t.name}</div>
+        ${stat ? `<div class="typhoon-badge-row">${stat}</div>` : ""}
+        ${sub ? `<div class="typhoon-badge-sub">${sub}</div>` : ""}
+      </div>`,
+    iconSize: [0, 0],
+    iconAnchor: [0, 0],
+  });
+}
+
+const fmtClock = (ms: number): string => {
+  const d = new Date(ms);
+  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}時`;
+};
+
+// 播放時的移動中心徽章：用「取樣後」的即時強度＋顯示時刻。
+function typhoonSampleBadgeIcon(
+  name: string,
+  color: string,
+  s: TyMoment
+): L.DivIcon {
+  const stat = [
+    s.maxWind !== null ? `${Math.round(s.maxWind)} m/s` : null,
+    s.pressure !== null ? `${Math.round(s.pressure)} hPa` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const sub = `${s.isForecast ? "預報" : "實測"} ${fmtClock(s.t)}`;
+  const category = categorize(s.maxWind) ?? "熱帶氣旋";
+  return L.divIcon({
+    className: "typhoon-badge-icon",
+    html: `
+      <div class="typhoon-badge" style="--ty-color:${color}">
+        <div class="typhoon-badge-title">${category} ${name}</div>
+        ${stat ? `<div class="typhoon-badge-row">${stat}</div>` : ""}
+        <div class="typhoon-badge-sub">${sub}</div>
+      </div>`,
+    iconSize: [0, 0],
+    iconAnchor: [0, 0],
+  });
+}
+
 /**
- * 颱風圖層：過去路徑（實線）＋官方預報路徑（虛線）＋各預報點 70% 機率圈，
- * 中心以旋轉颱風符號標示。資料來自 CWA W-C0034-005。
+ * 用 turf 把各預報點的 70% 機率圈 + 沿途路徑 buffer 聯集成一片平滑的
+ * 「預報不確定錐」，取代零散的小機率圈。無任何機率半徑時回傳 null。
  */
-function TyphoonLayer({ typhoon }: { typhoon: Typhoon }) {
-  const { past, current, forecast, name } = typhoon;
+function buildCone(
+  current: TyphoonFix | null,
+  forecast: TyphoonFix[]
+): Feature<Polygon | MultiPolygon> | null {
+  const withR = forecast.filter((f) => f.radius70 && f.radius70 > 0);
+  if (withR.length === 0) return null;
+
+  const nodes = current ? [current, ...forecast] : forecast;
+  const parts: Feature<Polygon | MultiPolygon>[] = [];
+
+  // 路徑主軸 buffer，確保各機率圈之間連續不斷裂。
+  if (nodes.length >= 2) {
+    const spine = turf.buffer(
+      turf.lineString(nodes.map((n) => [n.lng, n.lat])),
+      25,
+      { units: "kilometers" }
+    );
+    if (spine) parts.push(spine as Feature<Polygon | MultiPolygon>);
+  }
+  for (const f of withR) {
+    parts.push(
+      turf.circle([f.lng, f.lat], f.radius70 as number, {
+        steps: 48,
+        units: "kilometers",
+      }) as Feature<Polygon | MultiPolygon>
+    );
+  }
+
+  if (parts.length === 1) return parts[0];
+  return turf.union(
+    turf.featureCollection(parts)
+  ) as Feature<Polygon | MultiPolygon> | null;
+}
+
+/**
+ * 颱風圖層：過去路徑（灰實線）＋官方預報路徑（虛線，色隨強度）＋預報不確定錐，
+ * 中心以旋轉颱風符號＋雙暴風圈（七級／十級風）＋強度徽章標示。
+ * 資料來自 CWA W-C0034-005。
+ */
+function TyphoonLayer({
+  typhoon,
+  activeTime,
+}: {
+  typhoon: Typhoon;
+  activeTime: number | null;
+}) {
+  const { past, current, forecast, name, category } = typhoon;
+  const color = categoryColor(category);
 
   const toLatLng = (f: TyphoonFix): L.LatLngTuple => [f.lat, f.lng];
   const pastLine = past.map(toLatLng);
@@ -208,6 +379,38 @@ function TyphoonLayer({ typhoon }: { typhoon: Typhoon }) {
   const forecastLine = current
     ? [toLatLng(current), ...forecast.map(toLatLng)]
     : forecast.map(toLatLng);
+
+  const cone = useMemo(() => buildCone(current, forecast), [current, forecast]);
+
+  // 時間軸取樣：依 activeTime 內插出中心即時狀態，驅動移動符號與已行經亮軌。
+  const moments = useMemo(
+    () => buildTyphoonTimeline([typhoon])?.tracks[0]?.moments ?? [],
+    [typhoon]
+  );
+  const sample =
+    activeTime !== null && moments.length ? sampleAt(moments, activeTime) : null;
+  const activeColor = sample ? categoryColor(categorize(sample.maxWind)) : color;
+  const activeIcon = useMemo(
+    () => typhoonCenterIcon(activeColor),
+    [activeColor]
+  );
+  const activeBadge = sample
+    ? typhoonSampleBadgeIcon(name, activeColor, sample)
+    : null;
+  const traveled: L.LatLngTuple[] =
+    sample && activeTime !== null
+      ? [
+          ...moments.filter((m) => m.t <= activeTime).map<L.LatLngTuple>((m) => [m.lat, m.lng]),
+          [sample.lat, sample.lng],
+        ]
+      : [];
+
+  // 無時間軸（activeTime=null）時退回顯示目前中心。
+  const centerIcon = useMemo(() => typhoonCenterIcon(color), [color]);
+  const badgeIcon = useMemo(
+    () => typhoonBadgeIcon(typhoon, color),
+    [typhoon, color]
+  );
 
   return (
     <>
@@ -219,16 +422,40 @@ function TyphoonLayer({ typhoon }: { typhoon: Typhoon }) {
         />
       )}
 
-      {/* 預報路徑（虛線） */}
+      {/* 預報不確定錐（各預報點 70% 機率圈聯集） */}
+      {cone && (
+        <GeoJSON
+          key={`cone-${typhoon.id}-${current?.time ?? ""}`}
+          data={cone}
+          style={{
+            color,
+            weight: 1,
+            opacity: 0.5,
+            dashArray: "4 6",
+            fillColor: color,
+            fillOpacity: 0.1,
+          }}
+        />
+      )}
+
+      {/* 預報路徑（虛線，色隨強度） */}
       {forecastLine.length > 1 && (
         <Polyline
           positions={forecastLine}
           pathOptions={{
-            color: "#f43f5e",
+            color,
             weight: 2.5,
-            opacity: 0.95,
+            opacity: sample ? 0.5 : 0.95,
             dashArray: "6 7",
           }}
+        />
+      )}
+
+      {/* 已行經亮軌（時間軸播放：從起點到目前顯示時刻） */}
+      {traveled.length > 1 && (
+        <Polyline
+          positions={traveled}
+          pathOptions={{ color: activeColor, weight: 3.5, opacity: 0.95 }}
         />
       )}
 
@@ -251,55 +478,109 @@ function TyphoonLayer({ typhoon }: { typhoon: Typhoon }) {
         </CircleMarker>
       ))}
 
-      {/* 目前暴風半徑（七級風圈） */}
-      {current?.stormRadius && (
-        <Circle
-          center={toLatLng(current)}
-          radius={current.stormRadius * 1000}
-          pathOptions={{
-            color: "#fbbf24",
-            weight: 1,
-            opacity: 0.6,
-            fillColor: "#fbbf24",
-            fillOpacity: 0.12,
-          }}
-        />
+      {/* 雙暴風圈：七級風（外，橘）＋十級風（內，紅）。播放時跟著取樣點移動、脹縮。 */}
+      {(() => {
+        const ring = sample
+          ? {
+              center: [sample.lat, sample.lng] as L.LatLngTuple,
+              storm: sample.stormRadius,
+              severe: sample.severeRadius,
+            }
+          : current
+          ? {
+              center: toLatLng(current),
+              storm: current.stormRadius,
+              severe: current.severeRadius,
+            }
+          : null;
+        if (!ring) return null;
+        return (
+          <>
+            {ring.storm && (
+              <Circle
+                center={ring.center}
+                radius={ring.storm * 1000}
+                pathOptions={{
+                  color: "#fbbf24",
+                  weight: 1,
+                  opacity: 0.6,
+                  fillColor: "#fbbf24",
+                  fillOpacity: 0.1,
+                }}
+              />
+            )}
+            {ring.severe && (
+              <Circle
+                center={ring.center}
+                radius={ring.severe * 1000}
+                pathOptions={{
+                  color: "#ef4444",
+                  weight: 1,
+                  opacity: 0.75,
+                  fillColor: "#ef4444",
+                  fillOpacity: 0.16,
+                }}
+              />
+            )}
+          </>
+        );
+      })()}
+
+      {/* 各預報點時距標籤 */}
+      {forecast.map((f, i) =>
+        f.tau !== null ? (
+          <Marker
+            key={`fc-${i}`}
+            position={toLatLng(f)}
+            icon={validTimeLabelIcon(fmtValidTime(f))}
+          >
+            <Popup>
+              <TyphoonFixPopup name={name} fix={f} isForecast />
+            </Popup>
+          </Marker>
+        ) : null
       )}
 
-      {/* 各預報點的 70% 機率圈 + 時距標籤 */}
-      {forecast.map((f, i) => (
-        <Fragment key={`fc-${i}`}>
-          {f.radius70 && (
-            <Circle
-              center={toLatLng(f)}
-              radius={f.radius70 * 1000}
-              pathOptions={{
-                color: "#f43f5e",
-                weight: 1,
-                opacity: 0.5,
-                dashArray: "3 5",
-                fillColor: "#f43f5e",
-                fillOpacity: 0.07,
-              }}
+      {/* 中心（旋轉颱風符號）＋強度徽章：播放時移動到取樣點，否則落在目前中心 */}
+      {sample ? (
+        <>
+          <Marker
+            position={[sample.lat, sample.lng]}
+            icon={activeIcon}
+            interactive={false}
+            zIndexOffset={1000}
+          />
+          {activeBadge && (
+            <Marker
+              position={[sample.lat, sample.lng]}
+              icon={activeBadge}
+              interactive={false}
+              zIndexOffset={900}
             />
           )}
-          {f.tau !== null && (
-            <Marker position={toLatLng(f)} icon={tauLabelIcon(f.tau)}>
+        </>
+      ) : (
+        current && (
+          <>
+            <Marker
+              position={toLatLng(current)}
+              icon={centerIcon}
+              zIndexOffset={1000}
+            >
               <Popup>
-                <TyphoonFixPopup name={name} fix={f} isForecast />
+                <TyphoonFixPopup name={name} fix={current} isForecast={false} />
               </Popup>
             </Marker>
-          )}
-        </Fragment>
-      ))}
-
-      {/* 目前中心（旋轉颱風符號） */}
-      {current && (
-        <Marker position={toLatLng(current)} icon={typhoonCenterIcon} zIndexOffset={1000}>
-          <Popup>
-            <TyphoonFixPopup name={name} fix={current} isForecast={false} />
-          </Popup>
-        </Marker>
+            {badgeIcon && (
+              <Marker
+                position={toLatLng(current)}
+                icon={badgeIcon}
+                interactive={false}
+                zIndexOffset={900}
+              />
+            )}
+          </>
+        )
       )}
     </>
   );
@@ -379,6 +660,7 @@ export default function WeatherMap({
   showTempLabels,
   radar,
   typhoons,
+  typhoonTime,
   userLocation,
   onCountyDetected,
 }: Props) {
@@ -445,7 +727,10 @@ export default function WeatherMap({
       )}
 
       {typhoons && typhoons.length > 0 && <TyphoonView typhoons={typhoons} />}
-      {typhoons && typhoons.map((t) => <TyphoonLayer key={t.id} typhoon={t} />)}
+      {typhoons &&
+        typhoons.map((t) => (
+          <TyphoonLayer key={t.id} typhoon={t} activeTime={typhoonTime} />
+        ))}
 
       {/* 填色連續場（墊在最底層，非互動）*/}
       {(mode === "temperature" || mode === "precipitation") && (

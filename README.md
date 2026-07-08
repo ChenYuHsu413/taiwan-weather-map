@@ -112,6 +112,7 @@ public/data/taiwan-counties.geojson  縣市界線（見下方來源）
 
 - **主要來源（官方 API）**：所有測站資料來自 CWA 開放資料 API（`O-A0003-001` / `O-A0001-001`）。
 - **雷達動畫（地圖圖層）**：使用 [RainViewer](https://www.rainviewer.com/) 免費雷達圖磚（標準 XYZ tiles）。圖磚與底圖同為 Web Mercator，**天生正確對齊**。前端向 `api.rainviewer.com` 取過去約 2 小時的影格清單（每 10 分一格），預載各影格 `TileLayer` 並依索引切換 opacity 播放（切換瞬間完成、無閃爍）；底部控制列可播放/暫停與拖曳時間軸。
+- **颱風路徑（地圖圖層）**：CWA 颱風路徑預報 `W-C0034-005`（[lib/typhoon.ts](lib/typhoon.ts) + `GET /api/typhoon`）。官方分析（過去軌跡＋目前中心）與各時距預報路徑、70% 機率誤差圈、七級／十級風暴風半徑、移動方位與速度。前端 [lib/typhoonFrames.ts](lib/typhoonFrames.ts) 將分析＋預報點攤平為統一時間軸並在任意時刻**線性內插**颱風狀態。
 - **天氣特報爬蟲（NCDR CAP feed）**：[lib/warnings.ts](lib/warnings.ts) + `GET /api/warnings`。詳見下方「爬蟲 + 資料庫展示」。
 
 ### 爬蟲 + 資料庫展示
@@ -147,6 +148,7 @@ public/data/taiwan-counties.geojson  縣市界線（見下方來源）
 - [x] 底圖切換：深色 ↔ OpenStreetMap 街道圖
 - [x] 縣市界線 + hover 高亮 + 點擊 zoom
 - [x] 雷達回波：獨立圖層選項（與氣溫/雨量互斥，選它才播放動畫），RainViewer 圖磚，過去約 2 小時每 10 分一格；預設暫停於最新影格，可播放/暫停/拖曳時間軸；原生只取到 z7 再放大，避免外海「Zoom Level Not Supported」破圖
+- [x] 颱風路徑（獨立圖層）：CWA 官方分析＋預報路徑（`W-C0034-005`），過去軌跡、預報不確定錐（各報 70% 機率圈以 turf 聯集成連續錐）、雙暴風圈（七級／十級風）、強度分級上色（熱帶低壓→輕→中→強颱）、中心強度徽章（風速／氣壓／移動／分析時間）；預報點以絕對時刻標示（`7/10 08時`）。**可播放時間軸**：連續時間滑桿沿路徑平滑內插移動颱風中心，中心脈動光暈、已行經亮軌、暴風圈隨強度脹縮、顏色隨內插強度即時變化
 - [x] 天氣特報爬蟲 + Postgres：爬 NCDR CAP feed → 解析中央氣象署特報 → 寫入 `weather_warnings` 表 → 頂部橫幅顯示目前生效中的特報（`/api/warnings`）
 - [x] 使用者定位（Geolocation）+ turf 判斷所在縣市並高亮
 - [x] 摘要面板（最高/最低溫、最大雨量、最大風速、測站數、更新時間、資料來源、本次讀取來源：即時 API / 資料庫 / 舊資料）
@@ -156,7 +158,6 @@ public/data/taiwan-counties.geojson  縣市界線（見下方來源）
 
 ## 尚未完成 / 後續可擴充
 
-- [ ] 颱風路徑（架構已模組化，新增 `lib/` client + API route 即可）
 - [ ] 進一步自動化格點風場更新排程，讓 NOAA GFS 風場資料可定期重新產生
 - [ ] 測站搜尋 / 篩選
 - [ ] 單元測試（transform 邏輯已用臨時腳本驗證通過，尚未納入正式 test suite）

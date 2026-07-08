@@ -87,18 +87,39 @@ export default function WeatherLegend({ mode }: { mode: LayerKey }) {
             className="h-0.5 w-6 shrink-0"
             style={{
               backgroundImage:
-                "repeating-linear-gradient(to right, #f43f5e 0 6px, transparent 6px 13px)",
+                "repeating-linear-gradient(to right, currentColor 0 6px, transparent 6px 13px)",
             }}
           />
-          <span>官方預報路徑</span>
+          <span>官方預報路徑（色隨強度）</span>
         </div>
         <div className="mt-1 flex items-center gap-2">
-          <span className="h-3 w-3 shrink-0 rounded-full border border-rose-400 bg-rose-500/20" />
-          <span>70% 機率圈</span>
+          <span className="h-3 w-6 shrink-0 rounded border border-rose-400/70 bg-rose-500/15" />
+          <span>預報不確定錐（70%）</span>
         </div>
         <div className="mt-1 flex items-center gap-2">
-          <span className="h-3 w-3 shrink-0 rounded-full border border-amber-400 bg-amber-400/20" />
-          <span>暴風半徑（七級風）</span>
+          <span className="relative h-3 w-3 shrink-0 rounded-full border border-amber-400 bg-amber-400/15">
+            <span className="absolute inset-[3px] rounded-full border border-red-500 bg-red-500/25" />
+          </span>
+          <span>暴風圈：七級（外）／十級（內）</span>
+        </div>
+        <div className="mt-1.5 mb-0.5 text-[11px] font-medium text-gray-400">
+          強度分級
+        </div>
+        <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+          {[
+            ["熱帶低壓", "#38bdf8"],
+            ["輕度", "#facc15"],
+            ["中度", "#fb923c"],
+            ["強烈", "#f43f5e"],
+          ].map(([label, c]) => (
+            <span key={label} className="flex items-center gap-1">
+              <span
+                className="h-2.5 w-2.5 shrink-0 rounded-full"
+                style={{ backgroundColor: c }}
+              />
+              <span>{label}</span>
+            </span>
+          ))}
         </div>
       </div>
     );

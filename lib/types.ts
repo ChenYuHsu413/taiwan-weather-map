@@ -93,7 +93,10 @@ export interface TyphoonFix {
   maxWind: number | null; // 近中心最大風速 m/s
   gust: number | null; // 最大陣風 m/s
   radius70: number | null; // 70% 機率半徑（預報誤差圈）km
-  stormRadius: number | null; // 七級風（暴風）半徑 km
+  stormRadius: number | null; // 七級風（≥15m/s，暴風）半徑 km — Circle15ms
+  severeRadius: number | null; // 十級風（≥25m/s，強烈暴風）半徑 km — Circle25ms
+  moveDir: string | null; // 移動方位（W/WNW…16 方位）
+  moveSpeed: number | null; // 移動速度 km/h
 }
 
 export interface Typhoon {
