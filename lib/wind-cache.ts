@@ -29,6 +29,33 @@ export interface WindDebug {
   dbFetchedAt: string | null;
   dbFresh: boolean | null;
   dbError: string | null;
+  dbInfo: Record<string, unknown> | null; // 連線到哪個資料庫、表內筆數等
+}
+
+/** 診斷：目前連線落在哪個資料庫、表內有幾筆。 */
+async function dbInfo(): Promise<Record<string, unknown>> {
+  const url = process.env.POSTGRES_URL ?? process.env.DATABASE_URL ?? "";
+  let host: string | null = null;
+  try {
+    host = new URL(url).host;
+  } catch {
+    host = null;
+  }
+  try {
+    await ensureSchema();
+    const { rows } = await sql<Record<string, unknown>>`
+      SELECT current_database() AS db, current_schema() AS schema, current_user AS usr,
+             inet_server_addr()::text AS server,
+             (SELECT count(*) FROM gfs_wind_cache) AS wind_rows,
+             (SELECT max(fetched_at) FROM gfs_wind_cache) AS wind_latest,
+             (SELECT count(*) FROM snapshots) AS snapshot_rows,
+             (SELECT string_agg(table_schema || '.' || table_name, ',') FROM information_schema.tables
+               WHERE table_name = 'gfs_wind_cache') AS wind_tables
+    `;
+    return { host, ...rows[0] };
+  } catch (err) {
+    return { host, error: err instanceof Error ? `${err.name}: ${err.message}` : String(err) };
+  }
 }
 
 function isFresh(entry: GfsWindGrid): boolean {
@@ -99,6 +126,7 @@ export async function getWindGrid(forceRefresh = false): Promise<WindCacheResult
     dbFetchedAt: null,
     dbFresh: null,
     dbError: null,
+    dbInfo: null,
   };
 
   if (!forceRefresh) {
@@ -107,6 +135,7 @@ export async function getWindGrid(forceRefresh = false): Promise<WindCacheResult
     }
     if (!memoryCache) {
       const persisted = await readDb(debug);
+      debug.dbInfo = await dbInfo();
       if (persisted) {
         memoryCache = persisted;
         if (isFresh(persisted)) {
@@ -128,6 +157,7 @@ export async function getWindGrid(forceRefresh = false): Promise<WindCacheResult
     const fresh = await inflight;
     memoryCache = fresh;
     await writeDb(fresh);
+    debug.dbInfo = await dbInfo();
     return { payload: fresh, cached: false, stale: false, fallback: "nomads", debug };
   } catch (err) {
     console.error("[wind-cache] NOMADS 抓取失敗：", err);
