@@ -17,10 +17,19 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           set -euo pipefail
+          if [ -z "${CRON_SECRET}" ]; then
+            echo "::error::GitHub Secret CRON_SECRET 未設定或為空（Settings → Secrets and variables → Actions）"
+            exit 1
+          fi
+          echo "CRON_SECRET length: ${#CRON_SECRET}"
           code=$(curl -sS --max-time 90 -o body.json -w '%{http_code}' \
             -H "Authorization: Bearer ${CRON_SECRET}" \
             "https://taiwan-weather-map.vercel.app/api/wind?refresh=1")
           echo "HTTP $code"
           head -c 300 body.json; echo
+          if [ "$code" = "401" ]; then
+            echo "::error::401 unauthorized：GitHub Secret 與 Vercel 環境變數 CRON_SECRET 不一致，或 Vercel 尚未 redeploy 讓新變數生效"
+            exit 1
+          fi
           test "$code" = "200"
-          grep -q '"stale":false' body.json
+          grep -q '"stale":false' body.json || { echo "::error::API 回 stale:true，NOMADS 抓取失敗，請看 Vercel Logs 的 [wind-cache]"; exit 1; }
