@@ -57,12 +57,16 @@ export class CwaError extends Error {
   }
 }
 
+/** 對外（前端）顯示的通用錯誤訊息；設定細節只記在伺服器端 log。 */
+export const CWA_UNAVAILABLE_MESSAGE = "氣象資料服務暫時無法使用，請稍後再試。";
+
 function getApiKey(): string {
   const key = process.env.CWA_API_KEY;
   if (!key) {
-    throw new Error(
-      "缺少 CWA_API_KEY 環境變數，請在 .env.local 設定中央氣象署授權碼。"
+    console.error(
+      "[cwa] 缺少 CWA_API_KEY 環境變數：請在 .env.local（本機）或 Vercel 環境變數設定中央氣象署授權碼。"
     );
+    throw new Error(CWA_UNAVAILABLE_MESSAGE);
   }
   return key;
 }

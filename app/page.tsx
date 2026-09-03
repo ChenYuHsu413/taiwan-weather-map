@@ -75,9 +75,13 @@ export default function Home() {
     setError(null);
     try {
       const res = await fetch("/api/weather/current");
-      const json = (await res.json()) as WeatherApiResponse;
-      if (!res.ok || !json.success) {
-        throw new Error(json.error || `伺服器回應 ${res.status}`);
+      const json = (await res.json().catch(() => null)) as WeatherApiResponse | null;
+      if (!res.ok || !json?.success) {
+        // 502/503 代表後端與氣象署連線失敗或服務暫停，不把原始錯誤字串顯示給使用者。
+        if (res.status === 502 || res.status === 503) {
+          throw new Error("氣象資料服務暫時無法使用，請稍後再試。");
+        }
+        throw new Error(json?.error || `伺服器回應 ${res.status}`);
       }
       setMeta(json);
     } catch (err) {
@@ -241,7 +245,7 @@ export default function Home() {
               onClick={loadWeather}
               className="rounded-md bg-sky-600 px-4 py-2 text-sm text-white hover:bg-sky-500"
             >
-              重新載入
+              重試
             </button>
           </div>
         </div>
