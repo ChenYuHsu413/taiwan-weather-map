@@ -3,7 +3,7 @@
 
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { sql, ensureSchema } from "./db";
+import { sql, db, ensureSchema } from "./db";
 import { fetchLatestGfsWind, validTime, type GfsWindGrid } from "./gfs-wind";
 
 const TTL_SECONDS = Number(process.env.GFS_WIND_CACHE_TTL_SECONDS ?? 3 * 3600);
@@ -30,6 +30,48 @@ export interface WindDebug {
   dbFresh: boolean | null;
   dbError: string | null;
   dbInfo: Record<string, unknown> | null; // 連線到哪個資料庫、表內筆數等
+}
+
+/** 診斷：同一張表用不同讀法各讀一次，找出哪一種讀不到。 */
+async function readVariants(): Promise<Record<string, unknown>> {
+  const out: Record<string, unknown> = {};
+  const run = async (name: string, fn: () => Promise<unknown>) => {
+    try {
+      out[name] = await fn();
+    } catch (err) {
+      out[name] = `ERR ${err instanceof Error ? err.message : String(err)}`;
+    }
+  };
+  await ensureSchema();
+  await run("count", async () => (await sql`SELECT count(*)::int AS n FROM gfs_wind_cache`).rows[0]?.n);
+  await run("smallCols", async () =>
+    (await sql`SELECT id, fetched_at FROM gfs_wind_cache ORDER BY fetched_at DESC LIMIT 1`).rows[0] ?? null
+  );
+  await run("payloadLen", async () =>
+    (await sql`SELECT id, length(payload::text) AS len FROM gfs_wind_cache ORDER BY fetched_at DESC LIMIT 1`).rows[0] ?? null
+  );
+  await run("payloadRows_sql", async () => {
+    const { rows } = await sql`SELECT payload FROM gfs_wind_cache ORDER BY fetched_at DESC LIMIT 1`;
+    return { n: rows.length, type: typeof rows[0]?.payload, fetchedAt: (rows[0]?.payload as { fetchedAt?: string } | undefined)?.fetchedAt ?? null };
+  });
+  await run("payloadRows_byId", async () => {
+    const { rows } = await sql`SELECT payload FROM gfs_wind_cache ORDER BY id DESC LIMIT 1`;
+    return { n: rows.length, fetchedAt: (rows[0]?.payload as { fetchedAt?: string } | undefined)?.fetchedAt ?? null };
+  });
+  await run("payloadRows_client", async () => {
+    const client = await db.connect();
+    try {
+      const { rows } = await client.query("SELECT payload FROM gfs_wind_cache ORDER BY fetched_at DESC LIMIT 1");
+      return { n: rows.length, fetchedAt: (rows[0]?.payload as { fetchedAt?: string } | undefined)?.fetchedAt ?? null };
+    } finally {
+      client.release();
+    }
+  });
+  await run("snapshotRows_sql", async () => {
+    const { rows } = await sql`SELECT payload FROM snapshots ORDER BY fetched_at DESC LIMIT 1`;
+    return { n: rows.length, fetchedAt: (rows[0]?.payload as { fetchedAt?: string } | undefined)?.fetchedAt ?? null };
+  });
+  return out;
 }
 
 /** 診斷：目前連線落在哪個資料庫、表內有幾筆。 */
@@ -135,7 +177,7 @@ export async function getWindGrid(forceRefresh = false): Promise<WindCacheResult
     }
     if (!memoryCache) {
       const persisted = await readDb(debug);
-      debug.dbInfo = await dbInfo();
+      debug.dbInfo = { ...(await dbInfo()), variants: await readVariants() };
       if (persisted) {
         memoryCache = persisted;
         if (isFresh(persisted)) {
@@ -157,7 +199,7 @@ export async function getWindGrid(forceRefresh = false): Promise<WindCacheResult
     const fresh = await inflight;
     memoryCache = fresh;
     await writeDb(fresh);
-    debug.dbInfo = await dbInfo();
+    if (!debug.dbInfo) debug.dbInfo = await dbInfo();
     return { payload: fresh, cached: false, stale: false, fallback: "nomads", debug };
   } catch (err) {
     console.error("[wind-cache] NOMADS 抓取失敗：", err);
