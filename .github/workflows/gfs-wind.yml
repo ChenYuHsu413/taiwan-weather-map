@@ -1,5 +1,5 @@
 # 每 6 小時呼叫線上 /api/wind?refresh=1，預熱 Neon 快取，讓使用者不必等 NOMADS 下載。
-# 需在 GitHub repo Settings → Secrets 設定 CRON_SECRET（與 Vercel 環境變數同值）。
+# 需在 GitHub 設定 CRON_SECRET（與 Vercel 環境變數同值）：Repository secrets 或 Environment「Production」的 secrets 皆可。
 name: Refresh GFS wind cache
 
 on:
@@ -11,6 +11,8 @@ on:
 jobs:
   refresh:
     runs-on: ubuntu-latest
+    # Vercel 整合會建立 GitHub Environment「Production」；宣告後可同時讀到環境秘密與 repo 秘密。
+    environment: Production
     steps:
       - name: Call /api/wind?refresh=1
         env:
