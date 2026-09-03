@@ -17,23 +17,43 @@ export interface WindCacheResult {
   cached: boolean; // 未觸發 NOMADS 抓取
   stale: boolean; // 抓取失敗而沿用的舊資料（含靜態備援檔）
   fallback: "memory" | "db" | "nomads" | "static";
+  debug: WindDebug; // 診斷資訊（路由只在 ?debug=1 時回傳）
+}
+
+export interface WindDebug {
+  ttlSeconds: number;
+  hadMemory: boolean;
+  memoryFresh: boolean | null;
+  dbRows: number | null;
+  dbPayloadType: string | null;
+  dbFetchedAt: string | null;
+  dbFresh: boolean | null;
+  dbError: string | null;
 }
 
 function isFresh(entry: GfsWindGrid): boolean {
   return (Date.now() - new Date(entry.fetchedAt).getTime()) / 1000 < TTL_SECONDS;
 }
 
-async function readDb(): Promise<GfsWindGrid | null> {
+async function readDb(dbg?: WindDebug): Promise<GfsWindGrid | null> {
   try {
     await ensureSchema();
     const { rows } = await sql<{ payload: GfsWindGrid | string }>`
       SELECT payload FROM gfs_wind_cache ORDER BY fetched_at DESC LIMIT 1
     `;
+    if (dbg) dbg.dbRows = rows.length;
     if (rows.length === 0) return null;
     const p = rows[0].payload;
-    return typeof p === "string" ? (JSON.parse(p) as GfsWindGrid) : p;
+    if (dbg) dbg.dbPayloadType = typeof p;
+    const grid = typeof p === "string" ? (JSON.parse(p) as GfsWindGrid) : p;
+    if (dbg) {
+      dbg.dbFetchedAt = grid?.fetchedAt ?? null;
+      dbg.dbFresh = grid ? isFresh(grid) : null;
+    }
+    return grid;
   } catch (err) {
     console.error("[wind-cache] 讀取 gfs_wind_cache 失敗：", err);
+    if (dbg) dbg.dbError = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
     return null;
   }
 }
@@ -70,16 +90,27 @@ async function readStatic(): Promise<GfsWindGrid | null> {
  * @param forceRefresh 略過新鮮度檢查、直接重抓 NOMADS（排程預熱用）。
  */
 export async function getWindGrid(forceRefresh = false): Promise<WindCacheResult> {
+  const debug: WindDebug = {
+    ttlSeconds: TTL_SECONDS,
+    hadMemory: memoryCache !== null,
+    memoryFresh: memoryCache ? isFresh(memoryCache) : null,
+    dbRows: null,
+    dbPayloadType: null,
+    dbFetchedAt: null,
+    dbFresh: null,
+    dbError: null,
+  };
+
   if (!forceRefresh) {
     if (memoryCache && isFresh(memoryCache)) {
-      return { payload: memoryCache, cached: true, stale: false, fallback: "memory" };
+      return { payload: memoryCache, cached: true, stale: false, fallback: "memory", debug };
     }
     if (!memoryCache) {
-      const persisted = await readDb();
+      const persisted = await readDb(debug);
       if (persisted) {
         memoryCache = persisted;
         if (isFresh(persisted)) {
-          return { payload: persisted, cached: true, stale: false, fallback: "db" };
+          return { payload: persisted, cached: true, stale: false, fallback: "db", debug };
         }
       }
     }
@@ -97,17 +128,17 @@ export async function getWindGrid(forceRefresh = false): Promise<WindCacheResult
     const fresh = await inflight;
     memoryCache = fresh;
     await writeDb(fresh);
-    return { payload: fresh, cached: false, stale: false, fallback: "nomads" };
+    return { payload: fresh, cached: false, stale: false, fallback: "nomads", debug };
   } catch (err) {
     console.error("[wind-cache] NOMADS 抓取失敗：", err);
     const old = memoryCache ?? (await readDb());
     if (old) {
       memoryCache = old;
-      return { payload: old, cached: true, stale: true, fallback: "db" };
+      return { payload: old, cached: true, stale: true, fallback: "db", debug };
     }
     const staticGrid = await readStatic();
     if (staticGrid) {
-      return { payload: staticGrid, cached: true, stale: true, fallback: "static" };
+      return { payload: staticGrid, cached: true, stale: true, fallback: "static", debug };
     }
     throw err;
   }

@@ -14,6 +14,7 @@ const CACHE_HEADERS = {
 
 export async function GET(req: NextRequest) {
   const refresh = req.nextUrl.searchParams.get("refresh") === "1";
+  const debug = req.nextUrl.searchParams.get("debug") === "1";
   if (refresh) {
     const secret = process.env.CRON_SECRET;
     const auth = req.headers.get("authorization");
@@ -26,10 +27,10 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const { payload, cached, stale, fallback } = await getWindGrid(refresh);
+    const { payload, cached, stale, fallback, debug: diag } = await getWindGrid(refresh);
     return NextResponse.json(
-      { success: true, cached, stale, fallback, ...payload },
-      { headers: refresh ? { "Cache-Control": "no-store" } : CACHE_HEADERS }
+      { success: true, cached, stale, fallback, ...(debug ? { debug: diag } : {}), ...payload },
+      { headers: refresh || debug ? { "Cache-Control": "no-store" } : CACHE_HEADERS }
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : "未知錯誤";
