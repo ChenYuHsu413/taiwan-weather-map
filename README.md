@@ -111,6 +111,7 @@ public/data/taiwan-counties.geojson  縣市界線（見下方來源）
 ## 資料來源與爬蟲
 
 - **主要來源（官方 API）**：所有測站資料來自 CWA 開放資料 API（`O-A0003-001` / `O-A0001-001`）。
+- **底圖**：深色底圖用 [Esri World Dark Gray Base](https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer)（免 API key，原生最高 z16，attribution「Tiles © Esri — Esri, DeLorme, NAVTEQ」）；街道圖用 OpenStreetMap 標準圖磚。原本的 CARTO dark_all 自 2026 年 8 月起 raster 圖磚必須帶 API key，否則加上「API KEY REQUIRED」浮水印，故已移除對 CARTO 的依賴。
 - **雷達動畫（地圖圖層）**：使用 [RainViewer](https://www.rainviewer.com/) 免費雷達圖磚（標準 XYZ tiles）。圖磚與底圖同為 Web Mercator，**天生正確對齊**。前端向 `api.rainviewer.com` 取過去約 2 小時的影格清單（每 10 分一格），預載各影格 `TileLayer` 並依索引切換 opacity 播放（切換瞬間完成、無閃爍）；底部控制列可播放/暫停與拖曳時間軸。
 - **颱風路徑（地圖圖層）**：CWA 颱風路徑預報 `W-C0034-005`（[lib/typhoon.ts](lib/typhoon.ts) + `GET /api/typhoon`）。官方分析（過去軌跡＋目前中心）與各時距預報路徑、70% 機率誤差圈、七級／十級風暴風半徑、移動方位與速度。前端 [lib/typhoonFrames.ts](lib/typhoonFrames.ts) 將分析＋預報點攤平為統一時間軸並在任意時刻**線性內插**颱風狀態。
 - **天氣特報爬蟲（NCDR CAP feed）**：[lib/warnings.ts](lib/warnings.ts) + `GET /api/warnings`。詳見下方「爬蟲 + 資料庫展示」。
@@ -145,7 +146,7 @@ public/data/taiwan-counties.geojson  縣市界線（見下方來源）
 - [x] 粒子風場動畫：優先使用 NOAA GFS 10m u/v 格點風場，前端雙線性內插後以 Canvas 粒子流線呈現類 Windy 的風場視覺；若格點資料失敗才退回 CWA 測站 IDW 近似
 - [x] 濕度色階圖層
 - [x] 天氣（陰晴）示意圖層：每縣市取多數測站的天氣現象，以 emoji 徽章（☀️/⛅/☁️/🌧️/⛈️/🌫️）標在縣市代表位置
-- [x] 底圖切換：深色 ↔ OpenStreetMap 街道圖
+- [x] 底圖切換：深色（Esri World Dark Gray）↔ OpenStreetMap 街道圖
 - [x] 縣市界線 + hover 高亮 + 點擊 zoom
 - [x] 雷達回波：獨立圖層選項（與氣溫/雨量互斥，選它才播放動畫），RainViewer 圖磚，過去約 2 小時每 10 分一格；預設暫停於最新影格，可播放/暫停/拖曳時間軸；原生只取到 z7 再放大，避免外海「Zoom Level Not Supported」破圖
 - [x] 颱風路徑（獨立圖層）：CWA 官方分析＋預報路徑（`W-C0034-005`），過去軌跡、預報不確定錐（各報 70% 機率圈以 turf 聯集成連續錐）、雙暴風圈（七級／十級風）、強度分級上色（熱帶低壓→輕→中→強颱）、中心強度徽章（風速／氣壓／移動／分析時間）；預報點以絕對時刻標示（`7/10 08時`）。**可播放時間軸**：連續時間滑桿沿路徑平滑內插移動颱風中心，中心脈動光暈、已行經亮軌、暴風圈隨強度脹縮、顏色隨內插強度即時變化

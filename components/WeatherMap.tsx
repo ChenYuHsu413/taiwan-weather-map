@@ -67,20 +67,30 @@ interface Props {
   onCountyDetected?: (county: string | null) => void;
 }
 
-const BASEMAPS = {
+// 深色底圖用 Esri World Dark Gray Base（免 API key；CARTO 自 2026/8 起 raster 圖磚需帶 key，否則加浮水印）。
+// Esri 此服務原生只到 z16，更高層級由 Leaflet 放大既有圖磚。
+const BASEMAPS: Record<
+  "dark" | "osm",
+  {
+    url: string;
+    attribution: string;
+    // 額外的 TileLayer 選項；只放各底圖真正需要的鍵，避免把 undefined 傳給 Leaflet 覆蓋預設值。
+    options: { subdomains?: string; maxNativeZoom?: number };
+  }
+> = {
   dark: {
-    url: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+    url: "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
     attribution:
-      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
-    subdomains: "abcd",
+      'Tiles &copy; <a href="https://www.esri.com/">Esri</a> &mdash; Esri, DeLorme, NAVTEQ',
+    options: { maxNativeZoom: 16 },
   },
   osm: {
     url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
     attribution:
       '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-    subdomains: "abc",
+    options: { subdomains: "abc" },
   },
-} as const;
+};
 
 /**
  * 雷達回波動畫：預載所有影格的 RainViewer 圖磚（標準 XYZ tiles，正確對齊），
@@ -718,8 +728,8 @@ export default function WeatherMap({
         key={basemap}
         url={BASEMAPS[basemap].url}
         attribution={`${BASEMAPS[basemap].attribution} ｜ 資料：中央氣象署`}
-        subdomains={BASEMAPS[basemap].subdomains}
         maxZoom={19}
+        {...BASEMAPS[basemap].options}
       />
 
       {radar && (
