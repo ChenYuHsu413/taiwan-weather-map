@@ -92,9 +92,24 @@ const BASEMAPS: Record<
   },
 };
 
+// 雷達影格懶載入：只先建立目前影格前後各幾格的 TileLayer，其餘播放／拖曳到時再建立。
+// 一次預載全部 13 格會同時打上百張 RainViewer 圖磚而觸發 429。
+const RADAR_PRELOAD = 2;
+
+/** 目前影格 ±RADAR_PRELOAD 格（循環，播放到尾端回到開頭也不會空白）的 path 集合。 */
+function radarWindow(frames: RadarFrame[], idx: number): string[] {
+  const n = frames.length;
+  if (n === 0) return [];
+  const out: string[] = [];
+  for (let d = -RADAR_PRELOAD; d <= RADAR_PRELOAD; d++) {
+    out.push(frames[(((idx + d) % n) + n) % n].path);
+  }
+  return out;
+}
+
 /**
- * 雷達回波動畫：預載所有影格的 RainViewer 圖磚（標準 XYZ tiles，正確對齊），
- * 依 idx 切換 opacity 播放，切換瞬間完成（圖磚已快取）。
+ * 雷達回波動畫：RainViewer 圖磚（標準 XYZ tiles，正確對齊），依 idx 切換 opacity 播放。
+ * 已建立過的影格 TileLayer 會保留（圖磚已在瀏覽器快取），之後切回去仍是瞬間完成。
  */
 function RadarFrames({
   host,
@@ -105,26 +120,40 @@ function RadarFrames({
   frames: RadarFrame[];
   idx: number;
 }) {
+  const [mounted, setMounted] = useState<Set<string>>(
+    () => new Set(radarWindow(frames, idx))
+  );
+
+  useEffect(() => {
+    setMounted((prev) => {
+      const missing = radarWindow(frames, idx).filter((p) => !prev.has(p));
+      if (missing.length === 0) return prev;
+      const next = new Set(prev);
+      missing.forEach((p) => next.add(p));
+      return next;
+    });
+  }, [frames, idx]);
+
+  const current = frames[idx]?.path;
   return (
     <>
-      {frames.map((f, i) => (
-        <TileLayer
-          key={f.path}
-          url={`${host}${f.path}/256/{z}/{x}/{y}/2/1_1.png`}
-          opacity={i === idx ? 0.65 : 0}
-          zIndex={250}
-          // RainViewer 只在 z7 以下有全區覆蓋；z8+ 的外海圖磚會回傳
-          // 「Zoom Level Not Supported」佔位圖。故原生只取到 z7，更高層級
-          // 由 Leaflet 放大既有圖磚（略糊但連續、不破圖）。
-          maxNativeZoom={7}
-          maxZoom={19}
-          attribution={
-            i === 0
-              ? '雷達 &copy; <a href="https://www.rainviewer.com/">RainViewer</a>'
-              : undefined
-          }
-        />
-      ))}
+      {frames
+        .filter((f) => mounted.has(f.path))
+        .map((f) => (
+          <TileLayer
+            key={f.path}
+            url={`${host}${f.path}/256/{z}/{x}/{y}/2/1_1.png`}
+            opacity={f.path === current ? 0.65 : 0}
+            zIndex={250}
+            // RainViewer 只在 z7 以下有全區覆蓋；z8+ 的外海圖磚會回傳
+            // 「Zoom Level Not Supported」佔位圖。故原生只取到 z7，更高層級
+            // 由 Leaflet 放大既有圖磚（略糊但連續、不破圖）。
+            maxNativeZoom={7}
+            maxZoom={19}
+            // 所有影格帶相同字串，Leaflet 的 attribution control 會去重只顯示一次。
+            attribution='雷達 &copy; <a href="https://www.rainviewer.com/">RainViewer</a>'
+          />
+        ))}
     </>
   );
 }
