@@ -30,6 +30,7 @@ export interface WindDebug {
   dbFresh: boolean | null;
   dbError: string | null;
   dbInfo: Record<string, unknown> | null; // 連線到哪個資料庫、表內筆數等
+  dbInfoBefore: Record<string, unknown> | null; // readDb 之前先量一次
 }
 
 /** 診斷：同一張表用不同讀法各讀一次，找出哪一種讀不到。 */
@@ -88,6 +89,9 @@ async function dbInfo(): Promise<Record<string, unknown>> {
     const { rows } = await sql<Record<string, unknown>>`
       SELECT current_database() AS db, current_schema() AS schema, current_user AS usr,
              inet_server_addr()::text AS server,
+             pg_is_in_recovery() AS in_recovery, pg_backend_pid() AS pid,
+             pg_postmaster_start_time()::text AS pg_started, now()::text AS db_now,
+             txid_current_snapshot()::text AS txid_snapshot,
              (SELECT count(*) FROM gfs_wind_cache) AS wind_rows,
              (SELECT max(fetched_at) FROM gfs_wind_cache) AS wind_latest,
              (SELECT count(*) FROM snapshots) AS snapshot_rows,
@@ -169,6 +173,7 @@ export async function getWindGrid(forceRefresh = false): Promise<WindCacheResult
     dbFresh: null,
     dbError: null,
     dbInfo: null,
+    dbInfoBefore: null,
   };
 
   if (!forceRefresh) {
@@ -176,6 +181,7 @@ export async function getWindGrid(forceRefresh = false): Promise<WindCacheResult
       return { payload: memoryCache, cached: true, stale: false, fallback: "memory", debug };
     }
     if (!memoryCache) {
+      debug.dbInfoBefore = await dbInfo();
       const persisted = await readDb(debug);
       debug.dbInfo = { ...(await dbInfo()), variants: await readVariants() };
       if (persisted) {
