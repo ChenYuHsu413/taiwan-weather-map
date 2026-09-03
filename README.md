@@ -28,7 +28,7 @@ Next.js 14 (App Router) · TypeScript · Tailwind CSS · Leaflet / React Leaflet
 - **地圖引擎**：使用 Leaflet / React Leaflet 呈現互動地圖、圖層切換、測站 popup、使用者定位與縣市邊界。
 - **即時測站資料**：使用中央氣象署 CWA 開放資料 API（`O-A0003-001` 優先，`O-A0001-001` fallback），後端統一清洗成 GeoJSON，並以 10 分鐘快取降低外部 API 壓力。
 - **平滑氣溫/雨量場**：前端在 [InterpolatedField.tsx](components/InterpolatedField.tsx) 用逐像素 IDW（Inverse Distance Weighting）把離散測站值內插成連續點陣，再用縣市/陸地 polygon 裁切，以 `ImageOverlay` 疊到地圖上，做出接近 Windy 的平滑漸層效果。
-- **粒子風場動畫**：使用 NOAA GFS 0.25° 的 10m `UGRD` / `VGRD` 風場格點，先由 [scripts/fetch-gfs-wind.mjs](scripts/fetch-gfs-wind.mjs) 透過 NOMADS 下載台灣周邊 bbox 並轉成 [gfs-wind.json](public/data/gfs-wind.json)，前端再由 [WindParticleLayer.tsx](components/WindParticleLayer.tsx) 做雙線性內插並以 Canvas 粒子流線呈現。若格點資料載入失敗，才退回 CWA 測站風速/風向 IDW 作為備援。
+- **粒子風場動畫**：使用 NOAA GFS 0.25° 的 10m `UGRD` / `VGRD` 風場格點。後端 `GET /api/wind`（[lib/gfs-wind.ts](lib/gfs-wind.ts) + [lib/wind-cache.ts](lib/wind-cache.ts)）自動挑最接近現在的 cycle / 預報時距、從 NOMADS 下載並解 GRIB2，結果快取在記憶體與 Neon Postgres；前端 [WindParticleLayer.tsx](components/WindParticleLayer.tsx) 讀取後做雙線性內插並以 Canvas 粒子流線呈現。API 完全失敗才退回靜態備援檔 [gfs-wind.json](public/data/gfs-wind.json)，連它也沒有時才用 CWA 測站風速/風向 IDW。
 - **展示範圍調校**：風場圖層刻意限制縮放與拖曳範圍；粒子改用全程冷色系（藍→淡青，不含暖色端）並對高速流做軟上限壓縮，避免海上強風出現又快又暖、過度誇張的視覺，也避免使用者拖到格點邊界。
 - **投影對齊**：填色點陣繪製時使用 Web Mercator / 反 Mercator 換算，和 Leaflet 的投影一致，避免海岸線附近出現系統性偏移。
 - **雷達動畫**：地圖上的雷達動畫使用 RainViewer 免費 XYZ 圖磚。RainViewer 和底圖同為 Web Mercator，因此比 CWA 靜態 PNG `imageOverlay` 更容易精準對齊；播放控制則透過預載多個 `TileLayer`，切換 opacity 形成回放動畫。
@@ -64,6 +64,8 @@ npm run dev
 | `CWA_FALLBACK_DATASET` | 備援資料集 | `O-A0001-001` |
 | `WEATHER_CACHE_TTL_SECONDS` | 快取存活秒數 | `600`（10 分鐘） |
 | `POSTGRES_URL` | Neon / Vercel Postgres 連線字串。**部署到 Vercel 時由 Neon 整合自動注入**；本機開發填 Neon 的 Pooled 連線字串。亦相容 `DATABASE_URL` | 由 Neon 整合提供 |
+| `CRON_SECRET` | `GET /api/wind?refresh=1`（排程預熱風場快取）的驗證密鑰，需帶 `Authorization: Bearer <CRON_SECRET>`。GitHub Actions 的 repo Secret 要設同一個值 | — |
+| `GFS_WIND_CACHE_TTL_SECONDS` | 風場快取視為新鮮的秒數，超過才重抓 NOMADS | `10800`（3 小時） |
 
 > API key 只在後端使用，不會傳到前端。`.env.local` 已被 `.gitignore` 排除。
 
@@ -75,6 +77,8 @@ app/
   api/weather/current/route.ts   GET：回傳 GeoJSON + summary
   api/weather/history/route.ts   GET：單一測站歷史時序（?stationId=&limit=）
   api/warnings/route.ts          GET：目前生效中的天氣特報（NCDR CAP 爬蟲）
+  api/typhoon/route.ts           GET：颱風分析與預報路徑（CWA W-C0034-005）
+  api/wind/route.ts              GET：NOAA GFS 風場格點（記憶體 + Postgres 快取，?refresh=1 強制重抓）
 lib/
   cwa.ts               CWA API client（timeout、錯誤處理、primary/fallback）
   weather-transform.ts 原始 JSON → 統一 GeoJSON（缺值轉 null、去重、座標驗證）
@@ -83,12 +87,14 @@ lib/
   weather-store.ts     Postgres 儲存：寫快照 + 逐站時序、讀最新、查歷史
   db.ts                Postgres（Neon）連線 + schema
   warnings.ts          天氣特報爬蟲：抓 NCDR CAP feed → 解析 → 寫 DB → 讀生效中
+  gfs-wind.ts          NOAA GFS：挑選 cycle / 預報時距、NOMADS 下載、GRIB2 解碼（純函式）
+  wind-cache.ts        風場快取：記憶體 → gfs_wind_cache 表 → 重抓 → 舊資料 / 靜態檔備援
   color-scale.ts       氣溫/風速/濕度/雨量色階
   types.ts             TypeScript 型別
 components/
   WeatherMap.tsx           Leaflet 地圖（底圖切換、markers、風向箭頭、縣市界線、定位、雷達圖層）
   InterpolatedField.tsx    逐像素 IDW 內插填色場（氣溫/雨量，類 Windy 平滑漸層，裁切到陸地）
-  WindParticleLayer.tsx    測站風速/風向 IDW 內插後的 Canvas 粒子風場動畫
+  WindParticleLayer.tsx    讀 /api/wind 的 GFS 格點做粒子風場動畫；角落顯示 run / 更新時間，過時警示
   WarningBanner.tsx        天氣特報橫幅（NCDR CAP 爬蟲成果，頂部顯示）
   WeatherLayerControl.tsx  桌機圖層切換（含雷達）+ 縣市界線/氣溫標籤開關 + 底圖 + 定位按鈕
   MobileControls.tsx       手機版控制層（底部圖層列 + 摘要/圖例/設定 bottom sheet）
@@ -144,6 +150,7 @@ public/data/taiwan-counties.geojson  縣市界線（見下方來源）
 - [x] 雨量：逐像素 IDW 平滑填色（類 Windy，只填有雨陸地）+ 色帶圖例（不顯示測站點）
 - [x] 風向箭頭（依 windDirection 旋轉、依 windSpeed 上色）
 - [x] 粒子風場動畫：優先使用 NOAA GFS 10m u/v 格點風場，前端雙線性內插後以 Canvas 粒子流線呈現類 Windy 的風場視覺；若格點資料失敗才退回 CWA 測站 IDW 近似
+- [x] 風場自動更新：`/api/wind` 依現在時間挑最接近的 GFS cycle / 預報時距，3 小時快取（記憶體 + Postgres `gfs_wind_cache`），GitHub Actions 每 6 小時預熱；圖層角落顯示「GFS 09/03 06Z +6h」與更新時間，資料超過 12 小時提示可能過時
 - [x] 濕度色階圖層
 - [x] 天氣（陰晴）示意圖層：每縣市取多數測站的天氣現象，以 emoji 徽章（☀️/⛅/☁️/🌧️/⛈️/🌫️）標在縣市代表位置
 - [x] 底圖切換：深色（Esri World Dark Gray）↔ OpenStreetMap 街道圖
@@ -159,22 +166,40 @@ public/data/taiwan-counties.geojson  縣市界線（見下方來源）
 
 ## 尚未完成 / 後續可擴充
 
-- [ ] 進一步自動化格點風場更新排程，讓 NOAA GFS 風場資料可定期重新產生
 - [ ] 測站搜尋 / 篩選
 - [ ] 單元測試（transform 邏輯已用臨時腳本驗證通過，尚未納入正式 test suite）
 
 ## 重要備註：CWA 欄位對應
 
 `lib/cwa.ts` 與 `lib/weather-transform.ts` 依照 **CWA 新版（2023 後）測站 API 結構**（`records.Station[]`、`WeatherElement.AirTemperature` 等）撰寫，並已用合成資料驗證清洗邏輯。若實際 API 回傳欄位名稱有出入，**只需調整 `lib/weather-transform.ts` 的欄位取值**，其餘各層不受影響。
-## NOAA GFS 風場格點
+## NOAA GFS 風場格點（自動更新）
 
-風場粒子動畫第一版已改成優先使用 **NOAA GFS 0.25°** 的 10m UGRD / VGRD 格點資料，不再只靠測站 IDW 近似。流程如下：
+風場粒子動畫使用 **NOAA GFS 0.25°** 的 10m UGRD / VGRD 格點資料，由後端 `GET /api/wind` 自動更新，不再依賴手動產生的靜態檔。流程如下：
 
-1. 執行 `npm run fetch:gfs-wind`。
-2. [scripts/fetch-gfs-wind.mjs](scripts/fetch-gfs-wind.mjs) 會從 NOAA NOMADS `filter_gfs_0p25.pl` 抓台灣周邊較大 bbox：`110E-132E, 12N-34N`。
-3. 只下載 `lev_10_m_above_ground` 的 `UGRD` / `VGRD`，並在本機解 GRIB2 simple packing。
-4. 轉成前端可直接讀取的 [public/data/gfs-wind.json](public/data/gfs-wind.json)，格式包含 `grid.nx / ny / lo1 / la1 / dx / dy` 以及扁平化的 `u[]`、`v[]`。
-5. [components/WindParticleLayer.tsx](components/WindParticleLayer.tsx) 會先讀 `gfs-wind.json` 做雙線性內插；如果檔案不存在或載入失敗，才退回 CWA 測站風速/風向 IDW。
+1. 前端 [components/WindParticleLayer.tsx](components/WindParticleLayer.tsx) 呼叫 `GET /api/wind`。
+2. [lib/wind-cache.ts](lib/wind-cache.ts) 檢查快取：記憶體 → Neon Postgres `gfs_wind_cache` 表（`run_date, cycle, forecast_hour, fetched_at, payload jsonb`）。**`fetched_at` 未超過 3 小時直接回傳**。
+3. 過期才由 [lib/gfs-wind.ts](lib/gfs-wind.ts) 重抓：依 UTC 現在時間列出候選 cycle（00/06/12/18Z），**每個 cycle 取離現在最近的 3 小時預報時距**（f000 / f003 / f006 … 最多 f012）；最新 cycle 若尚未發布（NOMADS 通常延遲 3.5～5 小時）就自動退到前一個 cycle 與對應時距，讓資料時刻盡量貼近現在。例如 UTC 05:49 會選 `00Z +6h`（資料時刻 06:00Z）。
+4. 從 NOMADS `filter_gfs_0p25.pl` 只下載台灣周邊 bbox `110E-132E, 12N-34N` 的 `lev_10_m_above_ground` UGRD / VGRD，在 Node runtime 解 GRIB2 simple packing，寫回記憶體與 Postgres。
+5. 重抓失敗 → 回舊資料並標 `stale: true`；連舊資料都沒有 → 讀靜態備援檔 [public/data/gfs-wind.json](public/data/gfs-wind.json)。API 整個失敗時前端也會直接讀靜態檔；連它都不行才退回 CWA 測站風速/風向 IDW。
+6. 回應帶 `Cache-Control: public, s-maxage=1800, stale-while-revalidate=3600`，讓 Vercel CDN 分攤流量。`?refresh=1` 會略過快取強制重抓，需帶 `Authorization: Bearer <CRON_SECRET>`。
+
+回應格式：`success / cached / stale / fallback` 旗標 + `run.date / cycle / forecastHour`、`fetchedAt`、`validAt`（資料代表時刻）、`grid.nx / ny / lo1 / la1 / dx / dy` 以及扁平化的 `u[]`、`v[]`。圖層角落會顯示「GFS 09/03 06Z +6h · 更新 14:20」；資料時刻超過 12 小時則顯示「⚠️ 風場資料可能過時」。
+
+### 排程預熱
+
+[.github/workflows/gfs-wind.yml](.github/workflows/gfs-wind.yml) 每 6 小時（各 GFS cycle 發布後約 1 小時）呼叫 `/api/wind?refresh=1`，讓第一個使用者不必等 NOMADS 下載（通常 5～20 秒）。設定方式：在 Vercel 環境變數與 GitHub repo Secrets 各設一個相同的 `CRON_SECRET`。
+
+選擇 GitHub Actions 而非 `vercel.json` cron 的取捨：Vercel Hobby 方案的 cron 只能**每天一次**，設定 `0 */6 * * *` 會讓部署失敗；GitHub Actions 排程免費且不受方案限制，只多一個 Secret 要設。若升級 Pro 方案，可改在 `vercel.json` 加：
+
+```json
+{ "crons": [{ "path": "/api/wind?refresh=1", "schedule": "30 4,10,16,22 * * *" }] }
+```
+
+（Vercel cron 會自動帶 `Authorization: Bearer $CRON_SECRET`，程式碼不用改。）就算排程沒跑，`/api/wind` 也會在快取過期時自行重抓，只是該次請求會比較慢。
+
+### 靜態備援檔
+
+`npm run fetch:gfs-wind` 會用同一套 [lib/gfs-wind.ts](lib/gfs-wind.ts) 邏輯重新產生 `public/data/gfs-wind.json`（Node ≥ 22.18，直接執行 `.ts` 不需額外工具）。它只是最後備援，不需要定期更新。
 
 這個版本仍然**沒有使用 Windy**。類似 Windy 的風流線效果，是由 NOAA GFS 的 u/v 格點風場 + Canvas 粒子動畫達成；測站箭頭只作為可選的觀測參考圖層。
 

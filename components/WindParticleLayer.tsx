@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMap } from "react-leaflet";
 import L from "leaflet";
 import type { WeatherFeature } from "@/lib/types";
+import type { GfsWindGrid } from "@/lib/gfs-wind";
 
 interface WindVector {
   lng: number;
@@ -13,26 +14,47 @@ interface WindVector {
   speed: number;
 }
 
-interface WindGrid {
-  source: string;
-  fetchedAt: string;
-  run: {
-    date: string;
-    cycle: string;
-    forecastHour: number;
-  };
-  grid: {
-    nx: number;
-    ny: number;
-    lo1: number;
-    la1: number;
-    lo2: number;
-    la2: number;
-    dx: number;
-    dy: number;
-  };
-  u: number[];
-  v: number[];
+// /api/wind 回傳 GfsWindGrid 外加快取旗標；直接讀靜態檔時旗標為 undefined。
+type WindGrid = GfsWindGrid & { stale?: boolean; fallback?: string };
+
+// 資料代表時刻超過此時數就提示可能過時。
+const STALE_WARN_HOURS = 12;
+
+function isWindGrid(json: unknown): json is WindGrid {
+  const j = json as Partial<WindGrid> | null;
+  return !!j && !!j.grid && Array.isArray(j.u) && Array.isArray(j.v);
+}
+
+/** 資料代表時刻：優先用 validAt，舊版靜態檔沒有就由 run 推算。 */
+function windValidTime(g: WindGrid): Date {
+  if (g.validAt) return new Date(g.validAt);
+  const { date, cycle, forecastHour } = g.run;
+  return new Date(
+    Date.UTC(
+      Number(date.slice(0, 4)),
+      Number(date.slice(4, 6)) - 1,
+      Number(date.slice(6, 8)),
+      Number(cycle) + forecastHour
+    )
+  );
+}
+
+/** 例：「GFS 09/03 06Z +3h」 */
+function runLabel(g: WindGrid): string {
+  const { date, cycle, forecastHour } = g.run;
+  return `GFS ${date.slice(4, 6)}/${date.slice(6, 8)} ${cycle}Z +${forecastHour}h`;
+}
+
+function fmtLocal(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("zh-TW", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
 }
 
 interface Particle {
@@ -196,18 +218,29 @@ export default function WindParticleLayer({
     [features]
   );
 
+  // 先讀 /api/wind（快取 + 自動更新）；API 整個失敗才直接讀靜態備援檔。
   useEffect(() => {
     let cancelled = false;
-    fetch("/data/gfs-wind.json", { cache: "no-store" })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((json) => {
-        if (!cancelled && json?.grid && Array.isArray(json.u) && Array.isArray(json.v)) {
-          setWindGrid(json as WindGrid);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setWindGrid(null);
-      });
+    const load = async (): Promise<WindGrid | null> => {
+      try {
+        const res = await fetch("/api/wind");
+        const json: unknown = res.ok ? await res.json() : null;
+        if (isWindGrid(json)) return json;
+      } catch {
+        // fall through
+      }
+      try {
+        const res = await fetch("/data/gfs-wind.json", { cache: "no-store" });
+        const json: unknown = res.ok ? await res.json() : null;
+        if (isWindGrid(json)) return { ...json, stale: true, fallback: "static" };
+      } catch {
+        // fall through
+      }
+      return null;
+    };
+    load().then((grid) => {
+      if (!cancelled) setWindGrid(grid);
+    });
     return () => {
       cancelled = true;
     };
@@ -313,5 +346,25 @@ export default function WindParticleLayer({
     };
   }, [map, vectors, windGrid]);
 
-  return null;
+  if (!windGrid) return null;
+
+  const ageHours = (Date.now() - windValidTime(windGrid).getTime()) / 3600 / 1000;
+  const outdated = ageHours > STALE_WARN_HOURS;
+
+  // 圖層角落的小標籤：資料來源 run 與更新時間。手機版避開底部控制列。
+  return (
+    <div className="pointer-events-none absolute bottom-[136px] left-1/2 z-[900] -translate-x-1/2 md:bottom-4">
+      <div
+        className={`whitespace-nowrap rounded-md px-2.5 py-1 text-[11px] shadow backdrop-blur ${
+          outdated ? "bg-amber-500/20 text-amber-200" : "bg-panel text-gray-300"
+        }`}
+        title={`資料時刻 ${fmtLocal(windValidTime(windGrid).toISOString())}`}
+      >
+        <span className="font-semibold text-gray-100">{runLabel(windGrid)}</span>
+        <span className="ml-2">更新 {fmtLocal(windGrid.fetchedAt)}</span>
+        {windGrid.stale && <span className="ml-2 text-amber-300">備援</span>}
+        {outdated && <span className="ml-2">⚠️ 風場資料可能過時</span>}
+      </div>
+    </div>
+  );
 }

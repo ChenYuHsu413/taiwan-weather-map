@@ -92,4 +92,20 @@ async function createSchema(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_warnings_expires
       ON weather_warnings (expires DESC);
   `;
+
+  // NOAA GFS 風場格點快取（/api/wind）。每次成功抓取一筆，payload 為 GfsWindGrid 整包 JSON。
+  await sql`
+    CREATE TABLE IF NOT EXISTS gfs_wind_cache (
+      id            BIGSERIAL PRIMARY KEY,
+      run_date      TEXT NOT NULL,          -- YYYYMMDD（UTC）
+      cycle         TEXT NOT NULL,          -- 00/06/12/18
+      forecast_hour INTEGER NOT NULL,
+      fetched_at    TIMESTAMPTZ NOT NULL,
+      payload       JSONB NOT NULL
+    );
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_gfs_wind_fetched_at
+      ON gfs_wind_cache (fetched_at DESC);
+  `;
 }

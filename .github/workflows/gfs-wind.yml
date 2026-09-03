@@ -1,0 +1,26 @@
+# 每 6 小時呼叫線上 /api/wind?refresh=1，預熱 Neon 快取，讓使用者不必等 NOMADS 下載。
+# 需在 GitHub repo Settings → Secrets 設定 CRON_SECRET（與 Vercel 環境變數同值）。
+name: Refresh GFS wind cache
+
+on:
+  schedule:
+    # GFS 各 cycle 約在 UTC 03:30 / 09:30 / 15:30 / 21:30 後可用，晚 1 小時呼叫較穩。
+    - cron: "30 4,10,16,22 * * *"
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call /api/wind?refresh=1
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          code=$(curl -sS --max-time 90 -o body.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "https://taiwan-weather-map.vercel.app/api/wind?refresh=1")
+          echo "HTTP $code"
+          head -c 300 body.json; echo
+          test "$code" = "200"
+          grep -q '"stale":false' body.json
