@@ -114,6 +114,12 @@ public/data/taiwan-counties.geojson  縣市界線（見下方來源）
 
 快取採 in-flight 去重，避免多個請求同時打 CWA。資料持久化到 **Neon Postgres**（透過 Vercel Storage 整合連結，連線字串自動注入為 `POSTGRES_URL`/`DATABASE_URL`）；本機與線上連同一個雲端資料庫。因為是託管型共享 DB，冷啟動或換 serverless 執行個體後仍能讀回最新/舊快照，不像先前的 `/tmp` SQLite 會在換實例時遺失——這也是讓「使用者請求只讀 DB、不再同步卡在 CWA 而回 502」得以成立的關鍵。
 
+### 踩坑紀錄：Vercel Data Cache 會吃掉 `@vercel/postgres` 的查詢結果
+
+上線後發現一個很難察覺的問題：**每個 serverless 冷實例都讀不到資料庫裡的新資料**，但寫入正常、log 也沒有任何錯誤。原因是 `@vercel/postgres` 的 `sql` 標籤模板走 Neon 的 **HTTP** 介面（內部就是 `fetch`），而 Next.js 會攔截 `fetch` 並把回應存進 **Vercel Data Cache**——那層快取跨實例共享且持久，於是「同一句 SQL」永遠回傳第一次執行時的結果。以風場為例：表剛建好、還沒寫入資料時查過一次，「0 筆」這個回應就被快取，之後每個冷實例都以為資料庫是空的而重抓 NOMADS。
+
+診斷方式是在同一個請求裡用不同讀法查同一張表比對：`sql` 回傳的是各種過期結果，而走 WebSocket 的 `db.connect()` 永遠正確。修法是在每個會用到 `sql` 的 route 加上 `export const fetchCache = "force-no-store"`。注意 `dynamic = "force-dynamic"` **擋不住**這件事——它管的是路由本身是否被靜態化，不是路由內部發出的 fetch。
+
 ## 資料來源與爬蟲
 
 - **主要來源（官方 API）**：所有測站資料來自 CWA 開放資料 API（`O-A0003-001` / `O-A0001-001`）。

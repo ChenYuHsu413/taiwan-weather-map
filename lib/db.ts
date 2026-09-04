@@ -1,6 +1,16 @@
 // Postgres 連線與 schema（Vercel Neon）。僅在後端執行（route handler / server）。
 // 使用 @vercel/postgres 的連線池：serverless 友善，讀取連線字串於 POSTGRES_URL。
 // schema 以 ensureSchema() 建立，並用 globalThis 快取「已建立」狀態避免每次請求重跑。
+//
+// ⚠️ 陷阱：新增用到 `sql` 的 route 時，該 route 必須加上
+//     export const fetchCache = "force-no-store";
+// `sql` 標籤模板走 Neon 的 HTTP 介面（內部是 fetch），而 Next.js 會攔截 fetch 並把
+// 回應寫進 Vercel Data Cache——那層快取跨 serverless 實例共享且持久，於是「同一句
+// SQL」會永遠回傳第一次執行時的結果。實際踩過的情況：gfs_wind_cache 剛建表、還沒
+// 寫入資料時查過一次，之後每個冷實例都讀到「0 筆」而重抓 NOMADS；snapshots 與
+// weather_warnings 也讀不回最新資料。`dynamic = "force-dynamic"` 擋不住這件事，它
+// 管的是路由本身是否靜態化，不是路由內部發出的 fetch。
+// db.connect() 走 WebSocket、不經過 fetch，因此不受影響（saveSnapshot 就是用它）。
 
 import { sql, db } from "@vercel/postgres";
 

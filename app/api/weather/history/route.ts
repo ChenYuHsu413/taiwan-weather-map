@@ -3,6 +3,9 @@ import { getStationHistory } from "@/lib/weather-store";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+// getStationHistory 用的 sql 走 Neon HTTP 介面，會被 Next.js 的 fetch 快取攔截而
+// 回傳舊結果（詳見 lib/db.ts 開頭的說明）。
+export const fetchCache = "force-no-store";
 
 // GET /api/weather/history?stationId=466920&limit=144
 // 回傳單一測站的歷史時序觀測（資料量取決於已累積的抓取次數）。
