@@ -7,6 +7,9 @@ import type { CachedWeather, WeatherApiResponse } from "@/lib/types";
 // 此路由依賴外部 API 與快取，不可被靜態化。
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+// loadLatestSnapshot 用的 sql 走 Neon HTTP 介面，會被 Next.js 的 fetch 快取攔截，
+// 讓冷實例讀到過期回應（DB 有新快照卻讀成沒有）。關閉才能真正回讀最新快照。
+export const fetchCache = "force-no-store";
 
 function toBody(
   payload: CachedWeather,

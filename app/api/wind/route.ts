@@ -6,6 +6,9 @@ import { getWindGrid } from "@/lib/wind-cache";
 // GRIB2 解碼需要 Node runtime；NOMADS 下載可能耗時，放寬到 60 秒。
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// @vercel/postgres 的 sql 標籤模板走 Neon 的 HTTP 介面，會被 Next.js 的 fetch 快取
+// （跨實例共享且持久）攔截，導致每個冷實例都讀到第一次查詢時的舊回應。必須關閉。
+export const fetchCache = "force-no-store";
 export const maxDuration = 60;
 
 const CACHE_HEADERS = {
@@ -14,7 +17,6 @@ const CACHE_HEADERS = {
 
 export async function GET(req: NextRequest) {
   const refresh = req.nextUrl.searchParams.get("refresh") === "1";
-  const debug = req.nextUrl.searchParams.get("debug") === "1";
   if (refresh) {
     const secret = process.env.CRON_SECRET;
     const auth = req.headers.get("authorization");
@@ -27,10 +29,10 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const { payload, cached, stale, fallback, debug: diag } = await getWindGrid(refresh);
+    const { payload, cached, stale, fallback } = await getWindGrid(refresh);
     return NextResponse.json(
-      { success: true, cached, stale, fallback, ...(debug ? { debug: diag } : {}), ...payload },
-      { headers: refresh || debug ? { "Cache-Control": "no-store" } : CACHE_HEADERS }
+      { success: true, cached, stale, fallback, ...payload },
+      { headers: refresh ? { "Cache-Control": "no-store" } : CACHE_HEADERS }
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : "未知錯誤";
