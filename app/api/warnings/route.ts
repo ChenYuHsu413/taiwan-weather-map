@@ -4,6 +4,8 @@ import { getWarnings } from "@/lib/warnings";
 // GET /api/warnings：回傳目前生效中的中央氣象署天氣特報（來源為 NCDR CAP feed 爬蟲）。
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+// 讀取生效中特報的 sql 走 Neon HTTP 介面，會被 Next.js 的 fetch 快取攔截而回傳舊結果。
+export const fetchCache = "force-no-store";
 export const maxDuration = 30;
 
 export async function GET() {
